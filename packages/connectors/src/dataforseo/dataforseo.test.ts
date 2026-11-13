@@ -6,7 +6,7 @@ import type { ApiCallInput, CallRecorder } from "../recorder.ts";
 import { requestHash, stableStringify } from "./cache.ts";
 import { BudgetExceededError, DataforseoClient, LiveCallBlockedError } from "./client.ts";
 import { parseCompetitorDomains, parseSerp } from "./parse.ts";
-import { isGoogleRedirect, keyFromBreadcrumb, normalizeUrl, resultKey } from "./url.ts";
+import { hostOfKey, isGoogleRedirect, keyFromBreadcrumb, normalizeUrl, resultKey } from "./url.ts";
 
 const market = { country: "NL", language: "nl" } as const;
 
@@ -141,6 +141,41 @@ describe("url normalisation", () => {
       key: "c.example",
       source: "domain",
     });
+  });
+
+  it("never takes a display name for a domain", () => {
+    expect(
+      resultKey({
+        url: "https://google.com/goto?url=1",
+        domain: "www.Shop.example",
+        website_name: "Shop",
+      }),
+    ).toEqual({ key: "shop.example", source: "domain" });
+    expect(
+      resultKey({
+        url: "https://google.com/goto?url=1",
+        domain: "google.com",
+        website_name: "Shop | NL",
+      }),
+    ).toBeNull();
+    expect(hostOfKey("shop.example/planten")).toBe("shop.example");
+    expect(hostOfKey("shop")).toBeNull();
+  });
+
+  it("gives organic results the real domain, not the website name", () => {
+    const s = parseSerp("x", {
+      items: [
+        {
+          type: "organic",
+          rank_group: 1,
+          url: "https://www.tuin.example/planten",
+          domain: "www.tuin.example",
+          website_name: "Tuincentrum",
+          title: "T",
+        },
+      ],
+    });
+    expect(s.organic[0]?.domain).toBe("tuin.example");
   });
 });
 

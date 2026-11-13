@@ -22,7 +22,7 @@ import { defineStep } from "../step.ts";
  * showing up in the top 10 of the seed SERPs (finds them). Nothing is filtered here; step 9 does.
  */
 
-export const RESEARCH_VERSION = "1";
+export const RESEARCH_VERSION = "2";
 
 /* What core needs from a keyword data provider. DataforseoClient satisfies it structurally. */
 export interface KeywordIdeaLike {
@@ -94,6 +94,9 @@ export const cleanDomain = (d: string) =>
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
     .replace(/^www\./, "");
+
+/** A bare host ("bol.com"); SERP display names ("intratuin") can't be looked up. */
+export const isHostName = (d: string) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d);
 
 export const isPlatform = (domain: string) =>
   PLATFORM_DOMAINS.some((p) => domain === p || domain.endsWith(`.${p}`));
@@ -175,7 +178,7 @@ export function serpDomainCounts(serps: SerpLike[], ownHost: string): Map<string
     for (const o of s.organic) {
       if (o.rank > 10 || !o.domain) continue;
       const d = cleanDomain(o.domain);
-      if (!d || d === ownHost || d.endsWith(`.${ownHost}`) || seen.has(d)) continue;
+      if (!isHostName(d) || d === ownHost || d.endsWith(`.${ownHost}`) || seen.has(d)) continue;
       seen.add(d);
       counts.set(d, (counts.get(d) ?? 0) + 1);
     }
@@ -240,7 +243,8 @@ export function rankCompetitors(
   let mined = 0;
   for (const c of all) {
     if (mined >= opts.maxMined) break;
-    const eligible = c.inContext || (!c.platform && c.serpAppearances >= opts.minSerps);
+    const eligible =
+      isHostName(c.domain) && (c.inContext || (!c.platform && c.serpAppearances >= opts.minSerps));
     if (!eligible) continue;
     c.mined = true;
     mined++;
@@ -397,13 +401,38 @@ export function researchStep(port: ResearchPort) {
       );
       let compKeywords = 0;
       const mined = competitors.filter((c) => c.mined);
+      const failedDomains: string[] = [];
       for (const c of mined) {
-        for (const k of await port.rankedKeywords(c.domain, market, ctx)) {
+        let ranked: RankedKeywordLike[];
+        try {
+          ranked = await port.rankedKeywords(c.domain, market, ctx);
+        } catch (err) {
+          // One bad competitor shouldn't throw away a whole run; the budget still stops it.
+          if ((err as Error)?.name === "BudgetExceededError") throw err;
+          ctx.log.warn("competitor ranked keywords failed, skipping it", {
+            domain: c.domain,
+            error: (err as Error).message,
+          });
+          c.mined = false;
+          failedDomains.push(c.domain);
+          continue;
+        }
+        for (const k of ranked) {
           bag.add(k.keyword, "dfs_ranked_competitor", { idea: k });
           compKeywords++;
         }
       }
-      report("dfs_ranked_competitor", mined.length, compKeywords);
+      report(
+        "dfs_ranked_competitor",
+        mined.length,
+        compKeywords,
+        failedDomains.length ? `failed: ${failedDomains.join(", ")}` : undefined,
+      );
+      if (failedDomains.length) {
+        warnings.push(
+          `Couldn't get ranked keywords for ${failedDomains.join(", ")} (see the run log).`,
+        );
+      }
       const suggested2 = competitors.filter((c) => !c.inContext && c.mined).map((c) => c.domain);
       if (suggested2.length) {
         ctx.log.info("competitors found that aren't in the context", { domains: suggested2 });

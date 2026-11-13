@@ -71,9 +71,27 @@ export function resultKey(item: {
     const key = keyFromBreadcrumb(item.breadcrumb);
     if (key) return { key, source: "breadcrumb" };
   }
-  const domain = item.website_name ?? item.domain;
-  if (domain && !/google\./.test(domain)) {
-    return { key: domain.toLowerCase().replace(/^www\./, ""), source: "domain" };
-  }
-  return null;
+  // domain first: website_name is often a display name ("intratuin", "Bakker.com | Nederland").
+  const domain = [item.domain, item.website_name]
+    .map((d) =>
+      d
+        ?.trim()
+        .toLowerCase()
+        .replace(/^www\./, ""),
+    )
+    .find((d) => d && isHost(d) && !/(^|\.)google\./.test(d));
+  return domain ? { key: domain, source: "domain" } : null;
+}
+
+const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+/** A bare host name like "bol.com" or "nl.example.org"; not a display name. */
+export function isHost(s: string): boolean {
+  return HOST.test(s);
+}
+
+/** The host a result key starts with ("bol.com/kamerplanten" → "bol.com"), or null. */
+export function hostOfKey(key: string): string | null {
+  const host = key.split("/")[0] ?? "";
+  return isHost(host) ? host : null;
 }

@@ -1,4 +1,4 @@
-import { resultKey, type UrlSource } from "./url.ts";
+import { hostOfKey, resultKey, type UrlSource } from "./url.ts";
 
 /* Parsers from DataforSEO task results to the small shapes Mycel uses. The raw result
    stays in the cache, so a parser fix never needs a paid refetch. */
@@ -63,7 +63,8 @@ export function parseSerp(keyword: string, result: unknown): SerpResult {
           key: k.key,
           urlSource: k.source,
           url: k.source === "url" ? (str(item.url) ?? null) : null,
-          domain: str(item.website_name) ?? str(item.domain) ?? null,
+          // From the key, so a display-name website_name never ends up as a domain.
+          domain: hostOfKey(k.key),
         });
         break;
       }

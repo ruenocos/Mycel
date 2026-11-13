@@ -334,6 +334,33 @@ describe("researchStep", () => {
     expect(d.warnings.join(" ")).toContain("No Search Console data");
   });
 
+  it("skips display names and a competitor whose lookup fails, but still stops on the budget", async () => {
+    const port = stubPort({
+      erp: serp("erp", ["niche.nl", "intratuin", "broken.nl"]),
+      "erp implementatie": serp("erp implementatie", ["niche.nl", "intratuin", "broken.nl"]),
+      "erp kiezen": "blocked",
+    });
+    const ranked = port.rankedKeywords;
+    port.rankedKeywords = async (target, m, rec) => {
+      if (target === "broken.nl") throw new Error("40501 Invalid Field: 'target'");
+      return ranked(target, m, rec);
+    };
+    const d = await runStep(newRun(), researchStep(port), { context: consultancy, seeds });
+    expect(d.competitors.find((c) => c.domain === "intratuin")).toBeUndefined();
+    expect(d.competitors.find((c) => c.domain === "broken.nl")?.mined).toBe(false);
+    expect(d.competitors.find((c) => c.domain === "niche.nl")?.mined).toBe(true);
+    expect(d.warnings.join(" ")).toContain("broken.nl");
+
+    port.rankedKeywords = async () => {
+      const err = new Error("budget reached");
+      err.name = "BudgetExceededError";
+      throw err;
+    };
+    await expect(
+      runStep(newRun(), researchStep(port), { context: consultancy, seeds }),
+    ).rejects.toThrow("budget reached");
+  });
+
   it("stops the run on a real data error instead of passing on a partial dataset", async () => {
     const port = stubPort({});
     port.serpOrganic = async () => {
