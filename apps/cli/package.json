@@ -12,6 +12,7 @@
   "dependencies": {
     "@mycel/connectors": "workspace:*",
     "@mycel/core": "workspace:*",
+    "@mycel/schema": "workspace:*",
     "commander": "^14.0.0",
     "zod": "^4.6.7"
   }

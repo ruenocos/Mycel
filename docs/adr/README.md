@@ -15,3 +15,4 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0009 | Logging and traceability for every AI and API call                        |
 | 0010 | SERPs via the standard queue, breadcrumb fallback for goto URLs           |
 | 0011 | Quality yardstick: 23-step rubric + data checks; no staging until phase 5 |
+| 0012 | DeepSeek V4.1 Flash writes the Dutch content (writing test #12)           |

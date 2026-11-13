@@ -4,5 +4,6 @@ export * from "./context.ts";
 export * from "./map.ts";
 export * from "./query.ts";
 export * from "./site.ts";
+export * from "./writing-test.ts";
 
 export const SCHEMA_VERSION = "0.1.0";
