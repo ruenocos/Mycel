@@ -76,7 +76,7 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .requiredOption("--tasks <file>", "task set JSON (WritingTestSet)")
     .option(
       "--models <list>",
-      "comma-separated models",
+      "comma-separated writers; add +en for English instructions (e.g. deepseek-v4.1-flash,deepseek-v4.1-flash+en)",
       "deepseek-v4.1-flash,gemma4:31b,mistral-large-4",
     )
     .addOption(

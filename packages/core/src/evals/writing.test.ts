@@ -1,6 +1,13 @@
 import type { WritingOutput, WritingTestSet } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
-import { autoCheck, blindSheet, buildWritingMessages, parseScores, verdict } from "./writing.ts";
+import {
+  autoCheck,
+  blindSheet,
+  buildWritingMessages,
+  parseScores,
+  parseWriter,
+  verdict,
+} from "./writing.ts";
 
 // Synthetic set (Plantpost is fictional), so it may live in the repo.
 const set: WritingTestSet = {
@@ -117,5 +124,55 @@ describe("blindSheet + verdict", () => {
 
   it("rejects an unfilled sheet with a clear message", () => {
     expect(() => parseScores(sheet.csv)).toThrow(/line 2: natural must be 1-5/);
+  });
+});
+
+describe("English instructions (ADR 0013)", () => {
+  it("parses writers with and without +en", () => {
+    expect(parseWriter("gemma4:31b")).toEqual({
+      label: "gemma4:31b",
+      model: "gemma4:31b",
+      instructions: "market",
+    });
+    expect(parseWriter("deepseek-v4.1-flash+en")).toEqual({
+      label: "deepseek-v4.1-flash+en",
+      model: "deepseek-v4.1-flash",
+      instructions: "en",
+    });
+    expect(() => parseWriter("m+fr")).toThrow(/only \+en/);
+    expect(() => parseWriter("+en")).toThrow(/empty model/);
+  });
+
+  it("writes English instructions but asks for the answer in the market language", () => {
+    const task = {
+      ...(set.tasks[0] ?? ({} as never)),
+      instructionEn: 'Write an SEO title. Keyword: "gele bladeren".',
+    };
+    const [system, user] = buildWritingMessages(set, task, "en");
+    expect(system?.content).toContain("experienced Dutch web editor");
+    expect(system?.content).toContain("House style (in Dutch): Vriendelijk en praktisch");
+    expect(user?.content).toContain('Keyword: "gele bladeren"');
+    expect(user?.content).toContain("Length: at most 60 characters.");
+    expect(user?.content).toContain("Write the answer in Dutch (nl).");
+    // Sources are passed untranslated.
+    expect(user?.content).toContain(
+      "[s1] https://plantpost.example/gele-bladeren/\nTe veel water.",
+    );
+  });
+
+  it("falls back to the market-language instruction, labelled, when no English one exists", () => {
+    const [, user] = buildWritingMessages(set, set.tasks[1] ?? ({} as never), "en");
+    expect(user?.content).toContain(
+      "Task (written in Dutch): Waarom krijgt een plant gele bladeren?",
+    );
+  });
+
+  it("uses the English house style when the set has one", () => {
+    const [system] = buildWritingMessages(
+      { ...set, brandEn: "Friendly and practical." },
+      set.tasks[0] ?? ({} as never),
+      "en",
+    );
+    expect(system?.content).toContain("House style: Friendly and practical.");
   });
 });

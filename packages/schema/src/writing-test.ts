@@ -24,6 +24,8 @@ export const WritingTask = z.object({
   kind: WritingTaskKind,
   /** What to write, in the market language. */
   instruction: z.string().min(1),
+  /** The same instruction in English, the working language (ADR 0013). Keywords and titles stay in the market language. */
+  instructionEn: z.string().min(1).optional(),
   /** Facts are supplied, never taken from the model's memory (CLAUDE.md). */
   sources: z.array(WritingSource).min(1),
   limits: z
@@ -43,6 +45,8 @@ export const WritingTestSet = z
     language: z.string().regex(/^[a-z]{2}$/),
     /** House style of the site the text is for. */
     brand: z.string().min(1),
+    /** The house style in English, for English instructions (ADR 0013). */
+    brandEn: z.string().min(1).optional(),
     tasks: z.array(WritingTask).min(1),
   })
   .superRefine((s, ctx) => {
