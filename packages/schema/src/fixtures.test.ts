@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ClientContext, GateExpectations, SitePages } from "./index.ts";
+import { ClientContext, FilterEvalSet, GateExpectations, SitePages } from "./index.ts";
 
 const root = join(import.meta.dirname, "../../../fixtures/clients");
 const load = (client: string, file: string): unknown =>
@@ -31,6 +31,17 @@ describe("test-client fixtures", () => {
       expect(a).not.toBe(b);
       expect(urls.has(a)).toBe(true);
       expect(urls.has(b)).toBe(true);
+    });
+
+    it("labels the gate's core, outer and off-topic queries the same way in the filter eval", () => {
+      const set = FilterEvalSet.parse(load(client, "filter-eval.json"));
+      expect(set.client).toBe(client);
+      const label = new Map(set.cases.map((c) => [c.query, c.expect]));
+      for (const q of [...gate.expectedCore, ...gate.expectedOuter]) {
+        if (label.has(q)) expect(label.get(q), q).toBe("keep");
+      }
+      for (const q of gate.offTopic) if (label.has(q)) expect(label.get(q), q).toBe("drop");
+      expect(set.cases.filter((c) => c.expect === "drop").length).toBeGreaterThanOrEqual(8);
     });
 
     it("keeps off-topic terms out of the offerings", () => {
