@@ -8,10 +8,12 @@ import {
   CORE_VERSION,
   formatTimeline,
   parseScores,
+  parseWriter,
   RunStore,
   resolveRunId,
   verdict,
   WRITING_TEMPLATE,
+  WRITING_TEMPLATE_EN,
   type WritingVerdict,
 } from "@mycel/core";
 import { WritingKey, type WritingOutput, WritingTestSet } from "@mycel/schema";
@@ -60,18 +62,28 @@ export async function writingRun(opts: WritingRunOptions) {
   const models: { model: string; digest?: string }[] = [];
   let failure: unknown;
   try {
-    for (const model of opts.models) {
-      const digest = await provider?.modelDigest?.(model).catch(() => undefined);
+    for (const entry of opts.models) {
+      // A writer is a model, or a model with English instructions (`model+en`, ADR 0013).
+      // The label goes on the blind sheet; the real model name goes to the provider and the log.
+      const writer = parseWriter(entry);
+      const model = writer.label;
+      const digest = await provider?.modelDigest?.(writer.model).catch((err: unknown) => {
+        run.log.warn("model digest lookup failed", {
+          model: writer.model,
+          error: (err as Error).message,
+        });
+        return undefined;
+      });
       models.push({ model, ...(digest ? { digest } : {}) });
       await run.step(`write-${slug(model)}`, async (ctx) => {
         for (const task of set.tasks) {
           try {
             const res = await llm.generate(
               {
-                model,
-                template: WRITING_TEMPLATE,
+                model: writer.model,
+                template: writer.instructions === "en" ? WRITING_TEMPLATE_EN : WRITING_TEMPLATE,
                 params: { temperature: 0.5, seed: 42 },
-                messages: buildWritingMessages(set, task),
+                messages: buildWritingMessages(set, task, writer.instructions),
               },
               ctx,
             );

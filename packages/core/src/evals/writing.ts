@@ -23,7 +23,56 @@ const KIND_HINT: Record<WritingTask["kind"], string> = {
   factual: "Geef een kort antwoord en noem achter elke bewering de bron-id tussen haken, bv. [s1].",
 };
 
+/** Which language the instructions are in. The answer is always in the market language (ADR 0013). */
+export type WritingInstructions = "market" | "en";
+
+/** Prompt v2: English instructions, output in the market language (ADR 0013). */
+export const WRITING_TEMPLATE_EN = { id: "writing-test", version: "2-en" } as const;
+
+/**
+ * A writer in a run: a model, optionally with `+en` for English instructions, e.g.
+ * `deepseek-v4.1-flash+en`. The full entry is the label on the sheet; the model is the part before `+`.
+ */
+export function parseWriter(entry: string): {
+  label: string;
+  model: string;
+  instructions: WritingInstructions;
+} {
+  const [model = "", suffix] = entry.split("+");
+  if (!model) throw new Error(`empty model in writer "${entry}"`);
+  if (suffix !== undefined && suffix !== "en") {
+    throw new Error(`unknown writer suffix "+${suffix}" in "${entry}" (only +en exists)`);
+  }
+  return { label: entry, model, instructions: suffix === "en" ? "en" : "market" };
+}
+
+const KIND_HINT_EN: Record<WritingTask["kind"], string> = {
+  title: "Return only the title, without quotes or explanation.",
+  meta: "Return only the meta description, without quotes or explanation.",
+  brief: "Return the brief as plain text with short headings.",
+  article: "Return the article in Markdown, with H2 headings and no H1.",
+  "rewrite-b1": "Return only the rewritten text.",
+  factual: "Give a short answer and put the source id in brackets after every claim, e.g. [s1].",
+};
+
+export function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    // An unknown code is a data problem upstream; the code itself is still a usable instruction.
+    return code;
+  }
+}
+
 export function buildWritingMessages(
+  set: WritingTestSet,
+  task: WritingTask,
+  instructions: WritingInstructions = "market",
+): { role: "system" | "user"; content: string }[] {
+  return instructions === "en" ? englishMessages(set, task) : marketMessages(set, task);
+}
+
+function marketMessages(
   set: WritingTestSet,
   task: WritingTask,
 ): { role: "system" | "user"; content: string }[] {
@@ -42,6 +91,34 @@ export function buildWritingMessages(
   if (limits.length) head.push(`Lengte: ${limits.join(", ")}.`);
   head.push(KIND_HINT[task.kind]);
   const user = `${head.join("\n")}\n\nBronnen:\n${sources}`;
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+function englishMessages(
+  set: WritingTestSet,
+  task: WritingTask,
+): { role: "system" | "user"; content: string }[] {
+  const lang = languageName(set.language);
+  const limits: string[] = [];
+  if (task.limits.maxChars) limits.push(`at most ${task.limits.maxChars} characters`);
+  if (task.limits.minWords) limits.push(`at least ${task.limits.minWords} words`);
+  if (task.limits.maxWords) limits.push(`at most ${task.limits.maxWords} words`);
+  const system = [
+    `You are an experienced ${lang} web editor.`,
+    set.brandEn ? `House style: ${set.brandEn}` : `House style (in ${lang}): ${set.brand}`,
+    "Use only facts from the supplied sources. If something is not in them, do not make it up.",
+    `Write natural ${lang}: active, concrete, no filler, and no English loanwords where a plain ${lang} word exists.`,
+    `Keywords, titles and quotes stay exactly as given, in ${lang}.`,
+  ].join("\n");
+  const sources = task.sources.map((s) => `[${s.id}] ${s.url}\n${s.text}`).join("\n\n");
+  const head = [task.instructionEn ?? `Task (written in ${lang}): ${task.instruction}`];
+  if (limits.length) head.push(`Length: ${limits.join(", ")}.`);
+  head.push(KIND_HINT_EN[task.kind]);
+  head.push(`Write the answer in ${lang} (${set.language}).`);
+  const user = `${head.join("\n")}\n\nSources:\n${sources}`;
   return [
     { role: "system", content: system },
     { role: "user", content: user },
