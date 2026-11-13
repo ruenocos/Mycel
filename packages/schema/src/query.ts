@@ -9,6 +9,8 @@ export const QuerySource = z.enum([
   "serp_paa",
   "serp_related",
   "page",
+  /** A seed query the research started from (entity, offering, GSC, or model-proposed). */
+  "seed",
 ]);
 export type QuerySource = z.infer<typeof QuerySource>;
 
@@ -33,6 +35,8 @@ export const Query = z.object({
   intent: z
     .enum(["informational", "commercial", "transactional", "navigational", "local"])
     .optional(),
+  /** Language the data provider detected (ISO 639-1); the noise filter drops wrong-language queries. */
+  language: z.string().optional(),
   /** Which central entity this query belongs to (by name). */
   entity: z.string().optional(),
   scores: z.object({ relevance: score, prominence: score, popularity: score }).optional(),
