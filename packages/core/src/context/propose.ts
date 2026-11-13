@@ -16,7 +16,7 @@ import type { JsonModel } from "./llm.ts";
  * market language (ADR 0013).
  */
 
-export const CONTEXT_TEMPLATE = { id: "context-propose", version: "1" } as const;
+export const CONTEXT_TEMPLATE = { id: "context-propose", version: "2" } as const;
 
 /** The nine SOP questions, asked the way a business owner talks (doc 02). */
 export const CLIENT_QUESTIONS = [
@@ -210,9 +210,10 @@ export function buildContextMessages(
     "You are a senior SEO strategist preparing a topical map with Koray Tugberk Gubur's method.",
     "Before any map, you answer nine questions about the business, using only the evidence given.",
     "Never invent facts, prices, numbers or competitor names. If the evidence does not show something, say so plainly in the answer.",
-    "A central entity is what the site is mainly about, with its meaning pinned down (e.g. ERP as software, not a place name). List look-alikes that are NOT it under notThis.",
+    "A central entity is what the site is mainly about, with its meaning pinned down (e.g. ERP as software, not a place name).",
+    "notThis lists other meanings of the same words (homonyms and look-alikes, e.g. Erp the village). Never put competitors, alternatives or related products in notThis: searches comparing them are relevant.",
     "The source context is how the site earns money from search traffic. The central search intent combines source context and central entity as verbs plus nouns (e.g. 'choose, buy and care for houseplants').",
-    `Write every value in ${lang} (${market.language}), in plain words a business owner understands. Keep keywords, product names and quoted titles exactly as they appear in the evidence.`,
+    `Write every value in ${lang} (${market.language}), in plain words a business owner understands. Do not mix in English words unless they are names or terms the evidence itself uses. Keep keywords, product names and quoted titles exactly as they appear in the evidence.`,
     "Return only JSON.",
   ].join("\n");
   const questions = CLIENT_QUESTIONS.map((q) => `- ${q.id}: ${q.en}`).join("\n");

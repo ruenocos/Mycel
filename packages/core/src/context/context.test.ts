@@ -85,6 +85,9 @@ describe("buildContextMessages", () => {
     const [system, user] = buildContextMessages(ev, market);
     expect(system?.content).toContain("Write every value in Dutch (nl)");
     expect(system?.content).toContain("Never invent facts");
+    expect(system?.content).toContain(
+      "Never put competitors, alternatives or related products in notThis",
+    );
     for (const q of CLIENT_QUESTIONS) expect(user?.content).toContain(`- ${q.id}: ${q.en}`);
     const home = ev.pages.find((p) => p.kind === "home");
     expect(user?.content).toContain(`${home?.id} | home | ${home?.title}`);
