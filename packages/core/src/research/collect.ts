@@ -110,7 +110,10 @@ export class QueryBag {
   add(
     text: string,
     source: QuerySource,
-    extra: { idea?: KeywordIdeaLike; gsc?: { clicks: number; impressions: number; position: number } } = {},
+    extra: {
+      idea?: KeywordIdeaLike;
+      gsc?: { clicks: number; impressions: number; position: number };
+    } = {},
   ): void {
     const normalized = normalizeQuery(text);
     if (!normalized) return;
@@ -333,7 +336,9 @@ export function researchStep(port: ResearchPort) {
         report("gsc", 1, input.gscRows.length);
       } else {
         report("gsc", 0, 0, "not connected");
-        warnings.push("No Search Console data: the map can't see which queries already bring impressions.");
+        warnings.push(
+          "No Search Console data: the map can't see which queries already bring impressions.",
+        );
       }
 
       // Seed SERPs: PAA, related searches, AI Overview references, and who ranks.

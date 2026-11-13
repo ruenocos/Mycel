@@ -84,7 +84,12 @@ describe("deterministicSeeds", () => {
       ],
     });
     const texts = seeds.map((s) => s.normalized);
-    expect(texts).toEqual(["erp-software", "erp implementatie", "erp voor bouwbedrijven", "erp kosten"]);
+    expect(texts).toEqual([
+      "erp-software",
+      "erp implementatie",
+      "erp voor bouwbedrijven",
+      "erp kosten",
+    ]);
     expect(seeds.find((s) => s.normalized === "erp kosten")?.basis).toBe("ranked");
   });
 });
@@ -174,12 +179,22 @@ describe("competitor discovery", () => {
   it("counts domains once per SERP, without the client itself", () => {
     const counts = serpDomainCounts(
       [
-        serp("a", ["www.niche.nl", "niche.nl", "acme-erp.nl", "blog.acme-erp.nl", "nl.wikipedia.org"]),
+        serp("a", [
+          "www.niche.nl",
+          "niche.nl",
+          "acme-erp.nl",
+          "blog.acme-erp.nl",
+          "nl.wikipedia.org",
+        ]),
         serp("b", ["niche.nl", "other.nl"]),
       ],
       "acme-erp.nl",
     );
-    expect(Object.fromEntries(counts)).toEqual({ "niche.nl": 2, "nl.wikipedia.org": 1, "other.nl": 1 });
+    expect(Object.fromEntries(counts)).toEqual({
+      "niche.nl": 2,
+      "nl.wikipedia.org": 1,
+      "other.nl": 1,
+    });
   });
 
   it("mines confirmed competitors first, then repeat SERP players, never platforms", () => {
@@ -262,7 +277,10 @@ describe("researchStep", () => {
   it("collects every source, finds SERP competitors and validates the dataset", async () => {
     const port = stubPort({
       erp: serp("erp", ["niche.nl", "youtube.com", "acme-erp.nl"], {
-        aiOverview: { present: true, references: [{ url: "https://niche.nl/a", domain: "niche.nl" }] },
+        aiOverview: {
+          present: true,
+          references: [{ url: "https://niche.nl/a", domain: "niche.nl" }],
+        },
         peopleAlsoAsk: ["Wat kost een ERP?"],
         relatedSearches: ["erp systeem"],
       }),
@@ -280,8 +298,12 @@ describe("researchStep", () => {
     expect(q?.sources).toEqual(["dfs_related", "dfs_suggestions", "gsc"]);
     expect(q?.metrics.volume).toBe(50);
     expect(q?.language).toBe("nl");
-    expect(d.queries.find((x) => x.normalized === "wat kost een erp?")?.sources).toEqual(["serp_paa"]);
-    expect(d.queries.find((x) => x.normalized === "erp systeem")?.sources).toEqual(["serp_related"]);
+    expect(d.queries.find((x) => x.normalized === "wat kost een erp?")?.sources).toEqual([
+      "serp_paa",
+    ]);
+    expect(d.queries.find((x) => x.normalized === "erp systeem")?.sources).toEqual([
+      "serp_related",
+    ]);
     expect(d.serps).toHaveLength(2);
     expect(d.serps[0]?.aiOverview.present).toBe(true);
     expect(d.competitors.filter((c) => c.mined).map((c) => c.domain)).toEqual([

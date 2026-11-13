@@ -32,7 +32,9 @@ export function isBrandQuery(query: string, brands: string[]): boolean {
 
 export interface SeedData {
   gscQueries?: { query: string; impressions: number }[] | undefined;
-  rankedKeywords?: { keyword: string; volume?: number | undefined; position?: number | undefined }[] | undefined;
+  rankedKeywords?:
+    | { keyword: string; volume?: number | undefined; position?: number | undefined }[]
+    | undefined;
 }
 
 export interface SeedLimits {
@@ -129,7 +131,13 @@ export function checkSeeds(
 ): { seeds: ResearchSeed[]; dropped: { query: string; reason: string }[] } {
   const brands = [...brandTokens(ctx)];
   const competitorBrands = ctx.competitors
-    .map((d) => d.replace(/^www\./, "").split(".")[0]?.toLowerCase() ?? "")
+    .map(
+      (d) =>
+        d
+          .replace(/^www\./, "")
+          .split(".")[0]
+          ?.toLowerCase() ?? "",
+    )
     .filter((t) => t.length >= 3);
   const entities = new Set(ctx.centralEntities.map((e) => e.name));
   const offerings = new Set(ctx.offerings);
