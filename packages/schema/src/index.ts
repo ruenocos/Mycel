@@ -1,2 +1,7 @@
-/** Zod schemas and the step contract live here (issue #9). */
-export const SCHEMA_VERSION = "0.0.0";
+/** Zod schemas for every step's data. Steps validate their output against these (step contract). */
+export * from "./cluster.ts";
+export * from "./context.ts";
+export * from "./map.ts";
+export * from "./query.ts";
+
+export const SCHEMA_VERSION = "0.1.0";
