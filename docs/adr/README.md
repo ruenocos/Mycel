@@ -1,0 +1,14 @@
+# Architecture decision records
+
+One short file per settled decision. To change a decision, add a new ADR that supersedes the old one; don't edit history.
+
+| # | Decision |
+| --- | --- |
+| 0001 | TypeScript monorepo, logic in core, CLI first |
+| 0002 | Topical map first, Koray method from public material, data before LLM |
+| 0003 | Clustering by SERP overlap (3+ shared top-10 URLs) |
+| 0004 | DataforSEO first, every response cached |
+| 0005 | LLM behind a provider switch, facts always supplied |
+| 0006 | Human review by default (autopilot level 1) |
+| 0007 | Generic pipeline, proven on three test clients |
+| 0008 | No client data or research in the repo |
