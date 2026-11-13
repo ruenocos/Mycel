@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@mycel/connectors": "workspace:*",
     "@mycel/core": "workspace:*",
-    "commander": "^14.0.0"
+    "commander": "^14.0.0",
+    "zod": "^4.6.7"
   }
 }

@@ -1,5 +1,6 @@
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { llmPing } from "./llm-ping.ts";
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
 
@@ -30,6 +31,21 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
         return;
       }
       out(formatTimeline(runsDir, resolveRunId(runsDir, run), { minLevel: opts.level }));
+    });
+
+  const llm = program.command("llm").description("LLM provider tools");
+  llm
+    .command("ping")
+    .description("One logged LLM call, to check provider, key and logging")
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--debug", "mirror logs to the console")
+    .action(async (opts: { provider: string; model: string; debug?: boolean }) => {
+      const runsDir = program.opts<{ runsDir: string }>().runsDir;
+      const { timeline } = await llmPing({ runsDir, ...opts });
+      out(timeline);
     });
 
   return program;

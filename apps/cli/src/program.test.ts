@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildProgram } from "./program.ts";
 
@@ -20,5 +23,27 @@ describe("mycel logs", () => {
       "logs",
     ]);
     expect(lines).toEqual(["No runs in /nonexistent-mycel-runs."]);
+  });
+});
+
+describe("mycel llm ping", () => {
+  it("makes one logged call that shows up in mycel logs", async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), "mycel-cli-"));
+    const lines: string[] = [];
+    await buildProgram((s) => lines.push(s)).parseAsync([
+      "node",
+      "mycel",
+      "--runs-dir",
+      runsDir,
+      "llm",
+      "ping",
+      "--provider",
+      "fake",
+    ]);
+    const timeline = lines.join("\n");
+    expect(timeline).toContain("status ok");
+    expect(timeline).toContain("llm  fake deepseek-v4.1-flash@fake:0000000");
+    expect(timeline).toContain("llm-ping@1");
+    expect(timeline).toMatch(/→ llm-ping\/llm\/llm-0001\.json/);
   });
 });

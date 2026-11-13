@@ -10,6 +10,22 @@ export {
 export { type MarketParams, marketParams } from "./dataforseo/locations.ts";
 export * from "./dataforseo/parse.ts";
 export * from "./dataforseo/url.ts";
-export { type ApiCallInput, type CallRecorder, nullRecorder } from "./recorder.ts";
+export {
+  type GenerateOptions,
+  LlmClient,
+  type LlmClientOptions,
+  LlmOutputError,
+  promptHash,
+} from "./llm/client.ts";
+export { FakeProvider } from "./llm/fake.ts";
+export { type OllamaOptions, OllamaProvider } from "./llm/ollama.ts";
+export * from "./llm/types.ts";
+export {
+  type ApiCallInput,
+  type CallRecorder,
+  type LlmCallInput,
+  type LlmRecorder,
+  nullRecorder,
+} from "./recorder.ts";
 
 export const CONNECTORS_VERSION = "0.0.0";
