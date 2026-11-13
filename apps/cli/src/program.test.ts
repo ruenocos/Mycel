@@ -8,3 +8,17 @@ describe("mycel cli", () => {
     expect(program.version()).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
+
+describe("mycel logs", () => {
+  it("says so when there are no runs", async () => {
+    const lines: string[] = [];
+    await buildProgram((s) => lines.push(s)).parseAsync([
+      "node",
+      "mycel",
+      "--runs-dir",
+      "/nonexistent-mycel-runs",
+      "logs",
+    ]);
+    expect(lines).toEqual(["No runs in /nonexistent-mycel-runs."]);
+  });
+});
