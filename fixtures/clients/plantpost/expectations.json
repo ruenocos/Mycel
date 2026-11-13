@@ -1,0 +1,20 @@
+{
+  "expectedCore": [
+    "kamerplanten kopen",
+    "grote kamerplant kopen",
+    "diervriendelijke kamerplanten",
+    "hangplanten kopen",
+    "plantenpot kopen"
+  ],
+  "expectedOuter": [
+    "gele bladeren kamerplant",
+    "kamerplant verpotten",
+    "giftige kamerplanten katten",
+    "kamerplanten winter"
+  ],
+  "plantedConflict": {
+    "urls": ["/kamerplanten/grote-kamerplanten/", "/kamerplanten/xl-planten/"],
+    "sharedIntent": "grote kamerplant kopen"
+  },
+  "offTopic": ["tuinplanten", "kunstplanten", "moestuin", "snijbloemen", "cannabis"]
+}

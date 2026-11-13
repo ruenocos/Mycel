@@ -1,0 +1,189 @@
+{
+  "site": "plantpost.example",
+  "source": "fixture",
+  "pages": [
+    {
+      "url": "/",
+      "kind": "home",
+      "title": "Plantpost | Kamerplanten online bestellen en thuisbezorgd",
+      "h1": "Kamerplanten, met de post bij je thuis",
+      "metaDescription": "Bestel gezonde kamerplanten en mooie potten online. Voor 16:00 besteld, morgen in huis.",
+      "text": "Plantpost verstuurt kamerplanten die we zelf bij kwekers in het Westland uitzoeken. Kies een plant op formaat, op plek of op verzorging. Elke plant komt met een verzorgingskaartje."
+    },
+    {
+      "url": "/kamerplanten/grote-kamerplanten/",
+      "kind": "category",
+      "title": "Grote kamerplanten kopen | Plantpost",
+      "h1": "Grote kamerplanten",
+      "text": "Op zoek naar een grote kamerplant? Hier vind je planten vanaf 80 cm hoog, zoals de Monstera, Strelitzia en Ficus lyrata. Een grote plant geeft direct sfeer in je woonkamer."
+    },
+    {
+      "url": "/kamerplanten/xl-planten/",
+      "kind": "category",
+      "title": "XL planten bestellen | Plantpost",
+      "h1": "XL kamerplanten",
+      "text": "Onze XL planten zijn grote kamerplanten van 80 tot 180 cm. Bestel een grote Strelitzia, Kentia palm of Ficus en we bezorgen hem rechtop in een stevige doos."
+    },
+    {
+      "url": "/kamerplanten/diervriendelijke-kamerplanten/",
+      "kind": "category",
+      "title": "Diervriendelijke kamerplanten | Veilig voor kat en hond",
+      "h1": "Diervriendelijke kamerplanten",
+      "text": "Heb je een kat of hond? Deze kamerplanten zijn niet giftig voor huisdieren, zoals de Calathea, de graslelie en de Pilea. Zo hoef je je geen zorgen te maken als er eens geknabbeld wordt."
+    },
+    {
+      "url": "/kamerplanten/hangplanten/",
+      "kind": "category",
+      "title": "Hangplanten kopen | Plantpost",
+      "h1": "Hangplanten",
+      "text": "Hangplanten staan mooi in een hoge kast of in een plantenhanger voor het raam. Kies uit makkelijke hangers zoals de Epipremnum en het chinees lantaarntje."
+    },
+    {
+      "url": "/kamerplanten/luchtzuiverende-planten/",
+      "kind": "category",
+      "title": "Luchtzuiverende planten | Plantpost",
+      "h1": "Luchtzuiverende kamerplanten",
+      "text": "Planten als de Sansevieria en de graslelie staan bekend als luchtzuiverend. Ze zijn bovendien sterk en vragen weinig water, fijn voor een slaapkamer of kantoor."
+    },
+    {
+      "url": "/plantenpotten/",
+      "kind": "category",
+      "title": "Plantenpotten en sierpotten kopen | Plantpost",
+      "h1": "Plantenpotten",
+      "text": "Een mooie pot maakt de plant af. We verkopen keramieken sierpotten in maten van 12 tot 32 cm, zodat er voor elke kamerplant een passende pot is."
+    },
+    {
+      "url": "/product/monstera-deliciosa/",
+      "kind": "product",
+      "title": "Monstera deliciosa kopen | Gatenplant 90 cm",
+      "h1": "Monstera deliciosa (gatenplant)",
+      "text": "De Monstera, ook wel gatenplant, is een snelle groeier met grote ingesneden bladeren. Hoogte bij levering ongeveer 90 cm. Houdt van licht, maar niet van felle middagzon."
+    },
+    {
+      "url": "/product/ficus-lyrata/",
+      "kind": "product",
+      "title": "Ficus lyrata kopen | Vioolbladplant 120 cm",
+      "h1": "Ficus lyrata (vioolbladplant)",
+      "text": "De Ficus lyrata heeft grote, leerachtige bladeren in de vorm van een viool. Zet hem op een vaste lichte plek, want verplaatsen vindt hij niet fijn."
+    },
+    {
+      "url": "/product/strelitzia-nicolai/",
+      "kind": "product",
+      "title": "Strelitzia nicolai kopen | Paradijsvogelplant 150 cm",
+      "h1": "Strelitzia nicolai",
+      "text": "Deze paradijsvogelplant groeit binnen uit tot een indrukwekkende plant met bananenachtig blad. Een echte blikvanger voor een lichte woonkamer."
+    },
+    {
+      "url": "/product/sansevieria/",
+      "kind": "product",
+      "title": "Sansevieria kopen | Vrouwentong 60 cm",
+      "h1": "Sansevieria (vrouwentong)",
+      "text": "De vrouwentong is bijna niet kapot te krijgen. Water geven om de twee tot drie weken is genoeg. Let op: niet geschikt voor katten die aan planten knagen."
+    },
+    {
+      "url": "/product/zamioculcas/",
+      "kind": "product",
+      "title": "Zamioculcas kopen | ZZ-plant 70 cm",
+      "h1": "Zamioculcas zamiifolia",
+      "text": "De ZZ-plant groeit ook op een donkerdere plek en slaat water op in zijn wortels. Ideaal voor wie vaak weg is."
+    },
+    {
+      "url": "/product/calathea-orbifolia/",
+      "kind": "product",
+      "title": "Calathea orbifolia kopen | Diervriendelijk",
+      "h1": "Calathea orbifolia",
+      "text": "Grote ronde bladeren met zilveren strepen. De Calathea houdt van een vochtige omgeving en is veilig voor katten en honden."
+    },
+    {
+      "url": "/product/pilea-peperomioides/",
+      "kind": "product",
+      "title": "Pilea peperomioides kopen | Pannenkoekplant",
+      "h1": "Pilea peperomioides (pannenkoekplant)",
+      "text": "De pannenkoekplant maakt makkelijk stekjes die je kunt weggeven. Klein, vrolijk en niet giftig voor huisdieren."
+    },
+    {
+      "url": "/product/epipremnum-aureum/",
+      "kind": "product",
+      "title": "Epipremnum aureum kopen | Hangplant",
+      "h1": "Epipremnum aureum",
+      "text": "Een sterke hangplant met groen-geel gevlekt blad. Groeit snel en vergeeft het als je een keer vergeet water te geven."
+    },
+    {
+      "url": "/product/graslelie/",
+      "kind": "product",
+      "title": "Graslelie kopen | Chlorophytum",
+      "h1": "Graslelie (Chlorophytum comosum)",
+      "text": "De graslelie is een klassieker die makkelijk uitlopers maakt. Mooi als hangplant en veilig in huis met huisdieren."
+    },
+    {
+      "url": "/product/chinees-lantaarntje/",
+      "kind": "product",
+      "title": "Chinees lantaarntje kopen | Ceropegia woodii",
+      "h1": "Ceropegia woodii (chinees lantaarntje)",
+      "text": "Lange slierten met kleine hartvormige blaadjes. Deze hangplant heeft weinig water nodig en staat het mooist hoog."
+    },
+    {
+      "url": "/product/kentia-palm/",
+      "kind": "product",
+      "title": "Kentia palm kopen | 160 cm",
+      "h1": "Kentia palm (Howea forsteriana)",
+      "text": "Een elegante palm die ook op een plek met wat minder licht goed groeit. Bij levering ongeveer 160 cm hoog."
+    },
+    {
+      "url": "/product/sierpot-duin-21cm/",
+      "kind": "product",
+      "title": "Sierpot Duin 21 cm | Keramiek | Plantpost",
+      "h1": "Sierpot Duin, 21 cm",
+      "text": "Matte zandkleurige pot van keramiek, binnenkant geglazuurd zodat hij waterdicht is. Past om een kweekpot tot 19 cm."
+    },
+    {
+      "url": "/verzorging/kamerplant-verzorgen/",
+      "kind": "guide",
+      "title": "Kamerplant verzorgen: de basis in 5 stappen",
+      "h1": "Zo verzorg je een kamerplant",
+      "text": "Licht, water, voeding, pot en temperatuur: met deze vijf dingen houd je bijna elke kamerplant gezond. We leggen per stap uit waar je op let."
+    },
+    {
+      "url": "/verzorging/gele-bladeren/",
+      "kind": "guide",
+      "title": "Gele bladeren aan je kamerplant? Dit zijn de oorzaken",
+      "h1": "Waarom krijgt mijn kamerplant gele bladeren?",
+      "text": "Gele bladeren komen meestal door te veel water, te weinig licht of oude bladeren die de plant zelf loslaat. Kijk eerst naar de grond: is die nat, wacht dan met water geven."
+    },
+    {
+      "url": "/verzorging/kamerplant-verpotten/",
+      "kind": "guide",
+      "title": "Kamerplant verpotten: wanneer en hoe",
+      "h1": "Kamerplant verpotten",
+      "text": "Groeien de wortels uit de onderkant van de pot? Dan is het tijd om te verpotten. Het beste doe je dit in het voorjaar, in een pot die een paar centimeter groter is."
+    },
+    {
+      "url": "/verzorging/giftige-kamerplanten-katten-honden/",
+      "kind": "guide",
+      "title": "Welke kamerplanten zijn giftig voor katten en honden?",
+      "h1": "Giftige kamerplanten voor huisdieren",
+      "text": "Sommige populaire kamerplanten zijn giftig voor katten en honden als ze eraan knagen. In deze gids zie je welke planten je beter hoog zet en welke veilig zijn."
+    },
+    {
+      "url": "/verzorging/kamerplanten-in-de-winter/",
+      "kind": "guide",
+      "title": "Kamerplanten in de winter: minder water, meer licht",
+      "h1": "Je kamerplanten de winter door helpen",
+      "text": "In de winter groeien de meeste kamerplanten nauwelijks. Geef minder water, stop met voeding en zet ze niet vlak boven de verwarming."
+    },
+    {
+      "url": "/over-ons/",
+      "kind": "about",
+      "title": "Over Plantpost",
+      "h1": "Over ons",
+      "text": "Plantpost begon in een Utrechtse bovenwoning met een kamer vol stekjes. We verkopen alleen kamerplanten en potten: geen tuinplanten, geen kunstplanten en geen snijbloemen."
+    },
+    {
+      "url": "/contact/",
+      "kind": "contact",
+      "title": "Contact | Plantpost",
+      "h1": "Contact",
+      "text": "Vragen over je bestelling of over een plant? Mail of app ons, we reageren op werkdagen binnen een dag."
+    }
+  ]
+}
