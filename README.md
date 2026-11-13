@@ -6,15 +6,26 @@ Mycel helps Dutch SMB owners and content marketers automate SEO with AI, startin
 
 ## What lives where
 
-| Where | What |
-| --- | --- |
-| This repo | Product code, build rules (`CLAUDE.md`), decision records (`docs/adr/`), and test fixtures |
-| Project files (Claude project) | Research (Dutch), the De Saak baseline, and Wons's personal notes |
-| Claude Docs | The living plan: [product plan v1](https://claude.ai/artifact/RDoAUfXFa45GevMLXx92Ly) and [topical map examples](https://claude.ai/artifact/FQPMxQk48AmEqwvCu8PZju) |
+| Where                          | What                                                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| This repo                      | Product code, build rules (`CLAUDE.md`), decision records (`docs/adr/`), and test fixtures                                                                          |
+| Project files (Claude project) | Research (Dutch), the De Saak baseline, and Wons's personal notes                                                                                                   |
+| Claude Docs                    | The living plan: [product plan v1](https://claude.ai/artifact/RDoAUfXFa45GevMLXx92Ly) and [topical map examples](https://claude.ai/artifact/FQPMxQk48AmEqwvCu8PZju) |
 
 Client data (Search Console exports, crawls, run output) never goes in this repo. See `.gitignore`.
 
-## Planned layout
+## Getting started
+
+```bash
+pnpm install
+cp .env.example .env   # fill in keys, never commit .env
+pnpm check             # typecheck + lint + tests
+pnpm mycel --help
+```
+
+Node 22+ and pnpm 10.
+
+## Layout
 
 ```
 packages/core        all SEO logic, one step per Koray stage
