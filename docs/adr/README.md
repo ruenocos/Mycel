@@ -12,3 +12,4 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0006 | Human review by default (autopilot level 1) |
 | 0007 | Generic pipeline, proven on three test clients |
 | 0008 | No client data or research in the repo |
+| 0009 | Logging and traceability for every AI and API call |

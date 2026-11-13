@@ -28,3 +28,9 @@ docs/adr             one short record per settled decision
 ## Decisions
 
 See [`docs/adr/`](docs/adr/). Settled decisions are not reopened without a new ADR that supersedes the old one.
+
+## How work is tracked
+
+- **Milestones** = roadmap phases (0.5 to 7), each with its gate in the description.
+- **Issues** carry a type label (`feat`, `fix`, `chore`, `spike`, `evals`, `docs`), an area label (`area:core`, ...) and a milestone. `owner:wons` marks the non-code tasks only Wons can do.
+- **Releases**: one per passed phase gate (`v0.1.0` = phase 1 ... `v1.0.0` = phase 7). Notes are generated from PR labels (`.github/release.yml`).

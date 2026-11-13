@@ -1,0 +1,20 @@
+# Release notes are generated from merged PR labels.
+# A release is cut when a phase gate passes (v0.1.0 = phase 1, ...).
+changelog:
+  exclude:
+    labels: [skip-changelog]
+  categories:
+    - title: Breaking changes
+      labels: [breaking]
+    - title: New
+      labels: [feat]
+    - title: Fixes
+      labels: [fix]
+    - title: Quality and evals
+      labels: [evals]
+    - title: Research spikes
+      labels: [spike]
+    - title: Setup and docs
+      labels: [chore, docs]
+    - title: Other
+      labels: ["*"]
