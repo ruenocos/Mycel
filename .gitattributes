@@ -1,0 +1,2 @@
+# Always LF in the repo and on checkout (Windows included), so Biome passes everywhere
+* text=auto eol=lf
