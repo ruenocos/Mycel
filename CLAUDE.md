@@ -15,7 +15,7 @@ A topical-map-first SEO tool for Dutch SMBs. Data first, LLM second. A human app
 - **Log every AI/API call, exactly (ADR 0009).** Structured JSON logs with `runId` + `step`. LLM calls record provider, exact model + digest, params, prompt template version, prompt hash, tokens, Ollama timings, cost, latency, retries, errors. Full prompt + response are always saved to `runs/<run-id>/<step>/llm/` (secrets redacted). No silent catch blocks: every caught error is logged with context.
 - **Facts are supplied to the model, never taken from its memory.**
 - **User decisions survive re-runs** through the override layer; each run shows a diff against the previous one.
-- **Dutch first**, but no hardcoded language/country: market (country, language, city) comes from the context.
+- **English inside, market language out (ADR 0013).** Prompts, reasoning and step-to-step data are in English. Anything a user or reader sees is in the market language (Dutch by default). Source text, keywords and terms of art are never translated. Nothing is hardcoded: market (country, language, city) comes from the context.
 
 ## Never commit
 
