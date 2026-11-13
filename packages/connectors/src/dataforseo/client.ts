@@ -3,7 +3,9 @@ import type { CallRecorder } from "../recorder.ts";
 import { FileCache, requestHash } from "./cache.ts";
 import { marketParams } from "./locations.ts";
 import {
+  type CompetitorDomain,
   type KeywordIdea,
+  parseCompetitorDomains,
   parseKeywordSuggestions,
   parseRankedKeywords,
   parseRelatedKeywords,
@@ -122,6 +124,18 @@ export class DataforseoClient {
     const endpoint = "dataforseo_labs/google/ranked_keywords/live";
     const payload = { target, ...marketParams(market), limit: opts.limit ?? 100 };
     return parseRankedKeywords(await this.cachedLive(endpoint, payload, rec));
+  }
+
+  /** Domains that rank for the same keywords as `target` (steps 1-6: who are the competitors). */
+  async competitorDomains(
+    target: string,
+    market: Market,
+    rec: CallRecorder,
+    opts: { limit?: number } = {},
+  ): Promise<CompetitorDomain[]> {
+    const endpoint = "dataforseo_labs/google/competitors_domain/live";
+    const payload = { target, ...marketParams(market), limit: opts.limit ?? 20 };
+    return parseCompetitorDomains(await this.cachedLive(endpoint, payload, rec), target);
   }
 
   /**

@@ -1,5 +1,7 @@
+import { createInterface } from "node:readline/promises";
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
@@ -48,6 +50,76 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       const runsDir = program.opts<{ runsDir: string }>().runsDir;
       const { timeline } = await llmPing({ runsDir, ...opts });
       out(timeline);
+    });
+
+  const context = program
+    .command("context")
+    .description("Steps 1-6: propose the client context, then confirm it by hand");
+  context
+    .command("propose")
+    .description(
+      "Read the site and its search data and propose answers to the nine client questions",
+    )
+    .argument("<site>", "site URL (WordPress) or a fixture folder with pages.json")
+    .option(
+      "--market <market>",
+      'country / language / city, e.g. "NL / nl / Utrecht" (default: from the site)',
+    )
+    .option("--out <file>", "where to write the proposal (default: clients/<host>/context.json)")
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--no-gsc", "don't use Search Console")
+    .option("--no-dataforseo", "don't use DataforSEO")
+    .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        site: string,
+        opts: {
+          market?: string;
+          out?: string;
+          provider: string;
+          model: string;
+          gsc: boolean;
+          dataforseo: boolean;
+          budget: string;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        const res = await contextPropose({
+          runsDir,
+          site,
+          provider: opts.provider,
+          model: opts.model,
+          gsc: opts.gsc,
+          dataforseo: opts.dataforseo,
+          budgetUsd: Number(opts.budget),
+          ...(opts.market ? { market: opts.market } : {}),
+          ...(opts.out ? { out: opts.out } : {}),
+          ...(opts.debug ? { debug: true } : {}),
+        });
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+  context
+    .command("confirm")
+    .description("Go through a proposed context in the terminal: keep or edit every answer")
+    .argument("<file>", "context.json written by mycel context propose")
+    .option("--by <name>", "who confirms (default: your OS user name)")
+    .action(async (file: string, opts: { by?: string }) => {
+      const by = opts.by ?? process.env.USERNAME ?? process.env.USER ?? "unknown";
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        await contextConfirm(file, by, { print: out, ask: (p) => rl.question(p) });
+      } finally {
+        rl.close();
+      }
     });
 
   const gsc = program.command("gsc").description("Google Search Console tools");

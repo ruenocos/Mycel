@@ -181,3 +181,29 @@ export function parseRankedKeywords(result: unknown): RankedKeyword[] {
   }
   return out;
 }
+
+export interface CompetitorDomain {
+  domain: string;
+  /** Keywords both domains rank for. */
+  intersections?: number;
+  avgPosition?: number;
+}
+
+/** competitors_domain: items[].domain, intersections, avg_position. The target itself is left out. */
+export function parseCompetitorDomains(result: unknown, target: string): CompetitorDomain[] {
+  const self = target.replace(/^www\./, "").toLowerCase();
+  const out: CompetitorDomain[] = [];
+  for (const i of arr(obj(result).items)) {
+    const domain = str(i.domain)
+      ?.replace(/^www\./, "")
+      .toLowerCase();
+    if (!domain || domain === self) continue;
+    const c: CompetitorDomain = { domain };
+    const inter = num(i.intersections);
+    const pos = num(i.avg_position);
+    if (inter !== undefined) c.intersections = inter;
+    if (pos !== undefined) c.avgPosition = pos;
+    out.push(c);
+  }
+  return out;
+}
