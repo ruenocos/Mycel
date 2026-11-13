@@ -56,3 +56,45 @@ export const ClientContext = z.object({
     .optional(),
 });
 export type ClientContext = z.infer<typeof ClientContext>;
+
+/**
+ * Everything Mycel looked at before proposing a context (steps 1-6). Each item has an id the
+ * proposal cites as evidence, so a human can check where an answer came from.
+ */
+export const ContextEvidence = z.object({
+  site: z.object({ url: z.url(), name: z.string().min(1) }),
+  pages: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        url: z.string().startsWith("/"),
+        kind: z.string().min(1),
+        title: z.string().min(1),
+        h1: z.string().min(1),
+        metaDescription: z.string().optional(),
+        /** Body text, only for the pages that say most about the business. */
+        text: z.string().optional(),
+      }),
+    )
+    .min(1),
+  /** Top Search Console queries, when the client connected GSC. */
+  gscQueries: z
+    .array(z.object({ query: z.string(), clicks: z.number(), impressions: z.number() }))
+    .default([]),
+  /** Queries the domain already ranks for (DataforSEO Labs). */
+  rankedKeywords: z
+    .array(
+      z.object({
+        keyword: z.string(),
+        position: z.number().optional(),
+        volume: z.number().optional(),
+        url: z.string().optional(),
+      }),
+    )
+    .default([]),
+  /** Domains that rank for the same queries (DataforSEO Labs). */
+  competitorDomains: z
+    .array(z.object({ domain: z.string(), sharedKeywords: z.number().optional() }))
+    .default([]),
+});
+export type ContextEvidence = z.infer<typeof ContextEvidence>;

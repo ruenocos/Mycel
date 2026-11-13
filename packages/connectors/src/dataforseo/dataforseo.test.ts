@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { ApiCallInput, CallRecorder } from "../recorder.ts";
 import { requestHash, stableStringify } from "./cache.ts";
 import { BudgetExceededError, DataforseoClient, LiveCallBlockedError } from "./client.ts";
-import { parseSerp } from "./parse.ts";
+import { parseCompetitorDomains, parseSerp } from "./parse.ts";
 import { isGoogleRedirect, keyFromBreadcrumb, normalizeUrl, resultKey } from "./url.ts";
 
 const market = { country: "NL", language: "nl" } as const;
@@ -272,5 +272,22 @@ describe("DataforseoClient", () => {
     });
     await expect(c.relatedKeywords("a", market, recorder().rec)).rejects.toThrow(/40100/);
     expect(n).toBe(1);
+  });
+});
+
+describe("parseCompetitorDomains", () => {
+  it("keeps domain, shared keywords and position, and drops the target itself", () => {
+    const result = {
+      items: [
+        { domain: "www.desaak.com", intersections: 900, avg_position: 5 },
+        { domain: "Exact.com", intersections: 120, avg_position: 18.5 },
+        { domain: "afas.nl", intersections: 80 },
+        { foo: "no domain" },
+      ],
+    };
+    expect(parseCompetitorDomains(result, "desaak.com")).toEqual([
+      { domain: "exact.com", intersections: 120, avgPosition: 18.5 },
+      { domain: "afas.nl", intersections: 80 },
+    ]);
   });
 });

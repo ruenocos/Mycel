@@ -1,4 +1,4 @@
-/** DataforSEO, GSC and LLM providers (issues #10, #11, #14). */
+/** DataforSEO, GSC, WordPress and LLM providers (issues #10, #11, #14, #15). */
 export { FileCache, requestHash, stableStringify } from "./dataforseo/cache.ts";
 export {
   BudgetExceededError,
@@ -37,5 +37,14 @@ export {
   type LlmRecorder,
   nullRecorder,
 } from "./recorder.ts";
+
+export {
+  decodeEntities,
+  htmlToText,
+  kindOf,
+  WordPressClient,
+  WordPressError,
+  type WordPressOptions,
+} from "./wordpress/client.ts";
 
 export const CONNECTORS_VERSION = "0.0.0";
