@@ -1,0 +1,66 @@
+{
+  "name": "Schrijftest (voorbeeld)",
+  "version": "1",
+  "language": "nl",
+  "brand": "Plantpost: vriendelijk, praktisch en een beetje speels. Je-vorm, korte zinnen, geen vakjargon.",
+  "tasks": [
+    {
+      "id": "titel-gele-bladeren",
+      "kind": "title",
+      "instruction": "Schrijf een SEO-titel voor een gids over gele bladeren aan kamerplanten. Zoekwoord: gele bladeren kamerplant.",
+      "sources": [
+        {
+          "id": "s1",
+          "url": "https://plantpost.example/verzorging/gele-bladeren/",
+          "text": "Gele bladeren komen meestal door te veel water, te weinig licht of oude bladeren die de plant zelf loslaat."
+        }
+      ],
+      "limits": {
+        "maxChars": 60
+      }
+    },
+    {
+      "id": "meta-grote-kamerplanten",
+      "kind": "meta",
+      "instruction": "Schrijf een meta description voor de categorie grote kamerplanten.",
+      "sources": [
+        {
+          "id": "s1",
+          "url": "https://plantpost.example/kamerplanten/grote-kamerplanten/",
+          "text": "Planten vanaf 80 cm, zoals Monstera, Strelitzia en Ficus lyrata. Voor 16:00 besteld, morgen in huis."
+        }
+      ],
+      "limits": {
+        "maxChars": 155
+      }
+    },
+    {
+      "id": "b1-verpotten",
+      "kind": "rewrite-b1",
+      "instruction": "Herschrijf deze tekst naar taalniveau B1.",
+      "sources": [
+        {
+          "id": "s1",
+          "url": "https://plantpost.example/verzorging/kamerplant-verpotten/",
+          "text": "Indien de wortelkluit de volledige pot heeft gepenetreerd en er wortels uit de drainageopening protruderen, is het geïndiceerd de plant te verpotten, bij voorkeur gedurende het voorjaar, in een recipiënt dat enkele centimeters ruimer is."
+        }
+      ],
+      "limits": {
+        "maxWords": 80
+      }
+    },
+    {
+      "id": "feit-giftig",
+      "kind": "factual",
+      "instruction": "Is de Calathea giftig voor katten?",
+      "sources": [
+        {
+          "id": "s1",
+          "url": "https://plantpost.example/product/calathea-orbifolia/",
+          "text": "Grote ronde bladeren met zilveren strepen. De Calathea houdt van een vochtige omgeving en is veilig voor katten en honden."
+        }
+      ],
+      "limits": {}
+    }
+  ]
+}
