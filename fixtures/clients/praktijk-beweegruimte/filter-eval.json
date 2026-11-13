@@ -1,0 +1,145 @@
+{
+  "client": "praktijk-beweegruimte",
+  "cases": [
+    {
+      "query": "fysiotherapie utrecht",
+      "expect": "keep",
+      "why": "core, local"
+    },
+    {
+      "query": "sportfysiotherapie utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "manuele therapie utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "fysiotherapie leidsche rijn",
+      "expect": "keep",
+      "why": "core, their location"
+    },
+    {
+      "query": "dry needling utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "fysiotherapeut lombok",
+      "expect": "keep",
+      "why": "core, their location"
+    },
+    {
+      "query": "bekkenfysiotherapeut utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "medische fitness utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "lage rugpijn",
+      "expect": "keep",
+      "why": "complaint before booking"
+    },
+    {
+      "query": "rsi klachten",
+      "expect": "keep",
+      "why": "office-worker audience"
+    },
+    {
+      "query": "fysiotherapie vergoeding aanvullende verzekering",
+      "expect": "keep",
+      "why": "reimbursement question"
+    },
+    {
+      "query": "bekkenbodemklachten",
+      "expect": "keep",
+      "why": "complaint, bekken offering"
+    },
+    {
+      "query": "hoeveel fysiotherapie wordt vergoed",
+      "expect": "keep",
+      "why": "reimbursement question"
+    },
+    {
+      "query": "oefeningen nekpijn",
+      "expect": "keep",
+      "why": "complaint how-to"
+    },
+    {
+      "query": "tennisarm behandeling",
+      "expect": "keep",
+      "why": "complaint treatment"
+    },
+    {
+      "query": "fysiotherapie zonder verwijzing",
+      "expect": "keep",
+      "why": "how to start"
+    },
+    {
+      "query": "lombok vakantie",
+      "expect": "drop",
+      "why": "Lombok the island, not the area"
+    },
+    {
+      "query": "fc utrecht",
+      "expect": "drop",
+      "why": "football club"
+    },
+    {
+      "query": "opleiding fysiotherapie",
+      "expect": "drop",
+      "why": "education"
+    },
+    {
+      "query": "paardenfysiotherapie",
+      "expect": "drop",
+      "why": "not this: horses"
+    },
+    {
+      "query": "fysiotherapie amersfoort",
+      "expect": "drop",
+      "why": "another city"
+    },
+    {
+      "query": "vacature fysiotherapeut utrecht",
+      "expect": "drop",
+      "why": "jobs"
+    },
+    {
+      "query": "fysiotherapie den haag",
+      "expect": "drop",
+      "why": "another city"
+    },
+    {
+      "query": "hondenfysiotherapie",
+      "expect": "drop",
+      "why": "animals"
+    },
+    {
+      "query": "fysiotherapeut worden",
+      "expect": "drop",
+      "why": "career"
+    },
+    {
+      "query": "cz inloggen",
+      "expect": "drop",
+      "why": "navigational, insurer"
+    },
+    {
+      "query": "utrecht centraal parkeren",
+      "expect": "drop",
+      "why": "off topic"
+    },
+    {
+      "query": "zorgkaart nederland",
+      "expect": "drop",
+      "why": "navigational, directory"
+    }
+  ]
+}
