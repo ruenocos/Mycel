@@ -20,7 +20,7 @@ baseline/
 
 # Personal notes and research live in the project files, not here
 _notities-wons/
-research/
+/research/
 docs/00-README.md
 docs/PROJECT.md
 docs/[0-9]-*/

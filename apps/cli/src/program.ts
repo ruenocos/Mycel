@@ -5,6 +5,7 @@ import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
+import { research } from "./research.ts";
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
 
@@ -121,6 +122,75 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
         rl.close();
       }
     });
+
+  program
+    .command("research")
+    .description(
+      "Steps 7-8: collect the research dataset (queries, SERPs, competitors) for a context",
+    )
+    .argument("<context>", "a confirmed context.json")
+    .option(
+      "--site <site>",
+      "pages from a site URL or fixture folder (default: the context's site)",
+    )
+    .option(
+      "--out <file>",
+      "where to write the dataset (default: research.json next to the context)",
+    )
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model for seed phrasing", "deepseek-v4.1-flash")
+    .option("--no-model", "deterministic seeds only")
+    .option("--no-gsc", "don't use Search Console")
+    .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
+    .option("--budget <usd>", "DataforSEO budget for this run", "1")
+    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        contextFile: string,
+        opts: {
+          site?: string;
+          out?: string;
+          provider: string;
+          model: string | false;
+          gsc: boolean;
+          liveSerp?: boolean;
+          budget: string;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof research>>;
+        try {
+          res = await research({
+            runsDir,
+            contextFile,
+            provider: opts.provider,
+            model: opts.model === false ? "none" : opts.model,
+            noModel: opts.model === false,
+            gsc: opts.gsc,
+            liveSerp: !!opts.liveSerp,
+            budgetUsd: Number(opts.budget),
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.site ? { site: opts.site } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          // Raised before a run exists (missing or unconfirmed context): nothing to log yet.
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
 
   const gsc = program.command("gsc").description("Google Search Console tools");
   gsc
