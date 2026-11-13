@@ -103,6 +103,18 @@ describe("blindSheet + verdict", () => {
     expect(v.reason).toContain("invented facts in 2 answer(s)");
   });
 
+  it("reads semicolon CSV too (Excel with Dutch settings)", () => {
+    const [row] = parseScores("taskId;label;natural;correct;tone;invented\nt1;A;4;5;3;j\n");
+    expect(row).toEqual({
+      taskId: "t1",
+      label: "A",
+      natural: 4,
+      correct: 5,
+      tone: 3,
+      inventedFact: true,
+    });
+  });
+
   it("rejects an unfilled sheet with a clear message", () => {
     expect(() => parseScores(sheet.csv)).toThrow(/line 2: natural must be 1-5/);
   });

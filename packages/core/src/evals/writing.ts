@@ -177,7 +177,9 @@ export function blindSheet(
 export function parseScores(csv: string): WritingScore[] {
   const rows = csv.trim().split(/\r?\n/).slice(1);
   return rows.map((line, i) => {
-    const [taskId, label, natural, correct, tone, invented] = line.split(",").map((c) => c.trim());
+    const [taskId, label, natural, correct, tone, invented] = line
+      .split(/[,;]/)
+      .map((c) => c.trim());
     const n = (v: string | undefined, name: string) => {
       const x = Number(v);
       if (!Number.isInteger(x) || x < 1 || x > 5) {
