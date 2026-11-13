@@ -17,3 +17,5 @@
 **Why:** the models have far more English training data, so instructions and reasoning in English tend to be followed more reliably, and English logs are easier to debug. Readers still get native-language text.
 
 **Check before relying on it:** the writing test (#12) used Dutch instructions. Before the writing step switches to English instructions, run a short blind A/B on the same tasks (Dutch vs English instructions, DeepSeek only). The writing step keeps Dutch instructions if the Dutch output gets worse.
+
+**Result (13 Nov 2026):** a blind A/B on 6 long tasks (2 briefs, 2 articles, 2 B1 rewrites; the one-liners were left out because they come out nearly identical) ended 3-3. Neither variant invented facts. The Dutch output did not get worse, so the writing step switches to English instructions. The Dutch prompt won both articles, so long-form quality gets watched in the first real drafts.
