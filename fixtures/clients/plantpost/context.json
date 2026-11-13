@@ -1,0 +1,57 @@
+{
+  "site": { "url": "https://plantpost.example", "name": "Plantpost" },
+  "market": { "country": "NL", "language": "nl" },
+  "sourceContext": "Webshop die kamerplanten en plantenpotten per post verstuurt. Verdient aan online bestellingen, gemiddeld rond de 35 euro per bestelling.",
+  "centralEntities": [
+    {
+      "name": "kamerplant",
+      "disambiguation": "plant die binnenshuis wordt gehouden, in een pot",
+      "notThis": ["tuinplant", "kunstplant", "moestuinplant", "snijbloemen"]
+    }
+  ],
+  "centralSearchIntent": "een kamerplant kiezen, online kopen en in leven houden",
+  "audiences": [
+    "stedelingen van 25 tot 40 met een appartement",
+    "mensen die een plant als cadeau sturen",
+    "huisdiereigenaren die een veilige plant zoeken"
+  ],
+  "offerings": [
+    "grote kamerplanten",
+    "diervriendelijke kamerplanten",
+    "hangplanten",
+    "luchtzuiverende planten",
+    "plantenpotten",
+    "plant als cadeau versturen"
+  ],
+  "competitors": [],
+  "answers": [
+    {
+      "id": "source-context",
+      "question": "Hoe verdient de site geld?",
+      "answer": "Verkoop van kamerplanten en potten via de webshop, verzonden per post.",
+      "status": "proposed",
+      "evidence": ["homepage", "categoriepagina's"]
+    },
+    {
+      "id": "central-entity",
+      "question": "Wat is het centrale onderwerp van de site?",
+      "answer": "Kamerplanten: kiezen, kopen en verzorgen.",
+      "status": "proposed",
+      "evidence": ["titels van alle categorieën en gidsen"]
+    },
+    {
+      "id": "audience",
+      "question": "Wie koopt er?",
+      "answer": "Stedelingen van 25 tot 40, cadeaukopers en huisdiereigenaren.",
+      "status": "proposed",
+      "evidence": ["over-ons", "categorie diervriendelijke kamerplanten"]
+    },
+    {
+      "id": "not-offered",
+      "question": "Wat verkoopt de site niet?",
+      "answer": "Geen tuinplanten, geen kunstplanten, geen snijbloemen.",
+      "status": "proposed",
+      "evidence": ["over-ons"]
+    }
+  ]
+}

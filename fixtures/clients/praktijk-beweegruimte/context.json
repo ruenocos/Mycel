@@ -1,0 +1,62 @@
+{
+  "site": { "url": "https://praktijkbeweegruimte.example", "name": "Praktijk Beweegruimte" },
+  "market": { "country": "NL", "language": "nl", "city": "Utrecht" },
+  "sourceContext": "Fysiotherapiepraktijk met twee locaties in Utrecht (Lombok en Leidsche Rijn). Verdient aan behandelingen, die meestal via de aanvullende zorgverzekering worden vergoed.",
+  "centralEntities": [
+    {
+      "name": "fysiotherapie",
+      "disambiguation": "behandeling door een fysiotherapeut bij pijn, blessures of bewegingsklachten bij mensen",
+      "notThis": [
+        "paardenfysiotherapie",
+        "dierenfysiotherapie",
+        "opleiding fysiotherapie",
+        "vacature fysiotherapeut"
+      ]
+    }
+  ],
+  "centralSearchIntent": "een fysiotherapeut in de buurt vinden voor een klacht en weten of het vergoed wordt",
+  "audiences": [
+    "inwoners van Utrecht van 25 tot 65 met pijn of een blessure",
+    "sporters met een sportblessure",
+    "kantoorwerkers met nek-, schouder- of armklachten"
+  ],
+  "offerings": [
+    "fysiotherapie",
+    "sportfysiotherapie",
+    "manuele therapie",
+    "dry needling",
+    "bekkenfysiotherapie",
+    "medische fitness"
+  ],
+  "competitors": [],
+  "answers": [
+    {
+      "id": "source-context",
+      "question": "Hoe verdient de site geld?",
+      "answer": "Behandelingen in de praktijk, vooral vergoed via de aanvullende verzekering.",
+      "status": "proposed",
+      "evidence": ["tarieven-en-vergoeding", "homepage"]
+    },
+    {
+      "id": "central-entity",
+      "question": "Wat is het centrale onderwerp van de site?",
+      "answer": "Fysiotherapie in Utrecht, per behandeling en per locatie.",
+      "status": "proposed",
+      "evidence": ["behandelpagina's", "locatiepagina's"]
+    },
+    {
+      "id": "service-area",
+      "question": "Waar komen patiënten vandaan?",
+      "answer": "Utrecht West (Lombok en omgeving) en Leidsche Rijn.",
+      "status": "proposed",
+      "evidence": ["locatiepagina's"]
+    },
+    {
+      "id": "not-offered",
+      "question": "Wat doet de praktijk niet?",
+      "answer": "Geen kinderfysiotherapie, geen huisbezoeken, geen behandeling van dieren.",
+      "status": "proposed",
+      "evidence": ["over-ons"]
+    }
+  ]
+}

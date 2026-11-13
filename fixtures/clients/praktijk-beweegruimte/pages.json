@@ -1,0 +1,112 @@
+{
+  "site": "praktijkbeweegruimte.example",
+  "source": "fixture",
+  "pages": [
+    {
+      "url": "/",
+      "kind": "home",
+      "title": "Praktijk Beweegruimte | Fysiotherapie in Utrecht",
+      "h1": "Fysiotherapie in Lombok en Leidsche Rijn",
+      "metaDescription": "Fysiotherapeut in Utrecht. Zonder verwijzing welkom, meestal binnen een week terecht.",
+      "text": "Last van je rug, nek of een sportblessure? Bij Praktijk Beweegruimte kun je zonder verwijzing van de huisarts terecht. We hebben twee locaties in Utrecht en werken met een team van acht fysiotherapeuten."
+    },
+    {
+      "url": "/behandelingen/fysiotherapie/",
+      "kind": "service",
+      "title": "Fysiotherapie Utrecht | Praktijk Beweegruimte",
+      "h1": "Algemene fysiotherapie",
+      "text": "Bij algemene fysiotherapie kijken we naar je klacht, hoe je beweegt en wat je dagelijks doet. Samen maken we een plan met oefeningen en behandeling."
+    },
+    {
+      "url": "/behandelingen/sportfysiotherapie/",
+      "kind": "service",
+      "title": "Sportfysiotherapie Utrecht | Praktijk Beweegruimte",
+      "h1": "Sportfysiotherapie",
+      "text": "Een sportblessure vraagt om een plan dat je terugbrengt naar je sport. Onze sportfysiotherapeuten werken toe naar een veilige terugkeer, met testen voordat je weer volledig traint."
+    },
+    {
+      "url": "/behandelingen/manuele-therapie/",
+      "kind": "service",
+      "title": "Manuele therapie Utrecht | Praktijk Beweegruimte",
+      "h1": "Manuele therapie",
+      "text": "Manuele therapie richt zich op klachten van de wervelkolom en gewrichten, zoals een stijve nek of lage rugpijn. De manueel therapeut gebruikt onder meer mobilisaties en oefeningen."
+    },
+    {
+      "url": "/behandelingen/dry-needling/",
+      "kind": "service",
+      "title": "Dry needling Utrecht | Praktijk Beweegruimte",
+      "h1": "Dry needling",
+      "text": "Bij dry needling behandelt de fysiotherapeut triggerpoints in een spier met een dunne naald. Het wordt vaak gecombineerd met oefentherapie."
+    },
+    {
+      "url": "/behandelingen/bekkenfysiotherapie/",
+      "kind": "service",
+      "title": "Bekkenfysiotherapie Utrecht | Praktijk Beweegruimte",
+      "h1": "Bekkenfysiotherapie",
+      "text": "Een bekkenfysiotherapeut helpt bij klachten van de bekkenbodem, zoals urineverlies of bekkenpijn tijdens of na de zwangerschap. De behandeling vindt plaats in een aparte, rustige ruimte."
+    },
+    {
+      "url": "/behandelingen/medische-fitness/",
+      "kind": "service",
+      "title": "Medische fitness Utrecht | Praktijk Beweegruimte",
+      "h1": "Medische fitness",
+      "text": "Na je behandeling sterker worden onder begeleiding? Bij medische fitness train je in kleine groepen met een programma dat de fysiotherapeut voor je opstelt."
+    },
+    {
+      "url": "/locaties/lombok/",
+      "kind": "location",
+      "title": "Fysiotherapie Lombok Utrecht | Praktijk Beweegruimte",
+      "h1": "Locatie Lombok",
+      "text": "Onze praktijk in Lombok ligt op tien minuten fietsen van Utrecht Centraal. Hier bieden we alle behandelingen aan, behalve medische fitness."
+    },
+    {
+      "url": "/locaties/leidsche-rijn/",
+      "kind": "location",
+      "title": "Fysiotherapie Leidsche Rijn | Praktijk Beweegruimte",
+      "h1": "Locatie Leidsche Rijn",
+      "text": "In Leidsche Rijn zitten we in het gezondheidscentrum, met een eigen oefenzaal voor medische fitness en sportrevalidatie. Gratis parkeren voor de deur."
+    },
+    {
+      "url": "/tarieven-en-vergoeding/",
+      "kind": "pricing",
+      "title": "Tarieven en vergoeding fysiotherapie | Praktijk Beweegruimte",
+      "h1": "Tarieven en vergoeding",
+      "text": "Fysiotherapie wordt voor volwassenen meestal vergoed vanuit de aanvullende verzekering. Hoeveel behandelingen je vergoed krijgt, hangt af van je polis. Heb je geen aanvullende verzekering, dan betaal je zelf het tarief per behandeling."
+    },
+    {
+      "url": "/blog/lage-rugpijn/",
+      "kind": "blog",
+      "title": "Lage rugpijn: wat helpt en wanneer naar de fysio?",
+      "h1": "Lage rugpijn: wat kun je zelf doen?",
+      "text": "Lage rugpijn gaat vaak binnen een paar weken vanzelf over. In beweging blijven helpt meestal beter dan rust. Houdt de pijn langer aan of straalt hij uit naar je been, laat je dan onderzoeken."
+    },
+    {
+      "url": "/blog/rsi-klachten/",
+      "kind": "blog",
+      "title": "RSI-klachten door computerwerk | Praktijk Beweegruimte",
+      "h1": "RSI-klachten: pijn in nek, schouders en armen",
+      "text": "Wie veel achter een laptop werkt, krijgt soms klachten aan nek, schouders of armen. Tegenwoordig heet dit vaak KANS. Afwisseling in houding en pauzes zijn de eerste stap."
+    },
+    {
+      "url": "/blog/hoeveel-fysiotherapie-vergoed/",
+      "kind": "blog",
+      "title": "Hoeveel fysiotherapie wordt vergoed door je zorgverzekering?",
+      "h1": "Hoeveel behandelingen fysiotherapie worden vergoed?",
+      "text": "Of je fysiotherapie vergoed krijgt, hangt vooral af van je aanvullende verzekering. De basisverzekering vergoedt fysiotherapie voor volwassenen alleen in bepaalde situaties. Check je polis of vraag het ons."
+    },
+    {
+      "url": "/over-ons/",
+      "kind": "about",
+      "title": "Over Praktijk Beweegruimte",
+      "h1": "Over ons",
+      "text": "Praktijk Beweegruimte is een fysiotherapiepraktijk voor volwassenen in Utrecht. We doen geen kinderfysiotherapie en geen huisbezoeken."
+    },
+    {
+      "url": "/contact/",
+      "kind": "contact",
+      "title": "Afspraak maken | Praktijk Beweegruimte",
+      "h1": "Afspraak maken of contact",
+      "text": "Maak online een afspraak of bel de praktijk. Geef bij je aanmelding aan welke locatie je voorkeur heeft."
+    }
+  ]
+}

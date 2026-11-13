@@ -1,0 +1,26 @@
+{
+  "expectedCore": [
+    "fysiotherapie utrecht",
+    "sportfysiotherapie utrecht",
+    "manuele therapie utrecht",
+    "fysiotherapie leidsche rijn",
+    "dry needling utrecht"
+  ],
+  "expectedOuter": [
+    "lage rugpijn",
+    "rsi klachten",
+    "fysiotherapie vergoeding aanvullende verzekering",
+    "bekkenbodemklachten"
+  ],
+  "plantedConflict": {
+    "urls": ["/tarieven-en-vergoeding/", "/blog/hoeveel-fysiotherapie-vergoed/"],
+    "sharedIntent": "fysiotherapie vergoeding"
+  },
+  "offTopic": [
+    "lombok vakantie",
+    "fc utrecht",
+    "opleiding fysiotherapie",
+    "paardenfysiotherapie",
+    "fysiotherapie amersfoort"
+  ]
+}
