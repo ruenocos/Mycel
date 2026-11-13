@@ -11,6 +11,16 @@ export { type MarketParams, marketParams } from "./dataforseo/locations.ts";
 export * from "./dataforseo/parse.ts";
 export * from "./dataforseo/url.ts";
 export {
+  GscClient,
+  type GscDimension,
+  GscError,
+  type GscOptions,
+  type GscQuery,
+  type GscRow,
+  loadServiceAccount,
+  type ServiceAccount,
+} from "./gsc/client.ts";
+export {
   type GenerateOptions,
   LlmClient,
   type LlmClientOptions,

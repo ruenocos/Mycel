@@ -1,5 +1,6 @@
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
@@ -46,6 +47,21 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       const runsDir = program.opts<{ runsDir: string }>().runsDir;
       const { timeline } = await llmPing({ runsDir, ...opts });
       out(timeline);
+    });
+
+  const gsc = program.command("gsc").description("Google Search Console tools");
+  gsc
+    .command("check")
+    .description("Check the GSC key and access, and show the top queries of the last 28 days")
+    .option("--property <property>", "GSC property (default: GSC_PROPERTY)")
+    .option("--debug", "mirror logs to the console")
+    .action(async (opts: { property?: string; debug?: boolean }) => {
+      const runsDir = program.opts<{ runsDir: string }>().runsDir;
+      const res = await gscCheck({ runsDir, ...opts });
+      for (const l of res.lines) out(l);
+      out("");
+      out(res.timeline);
+      if (!res.ok) process.exitCode = 1;
     });
 
   return program;

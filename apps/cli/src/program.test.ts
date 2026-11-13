@@ -47,3 +47,14 @@ describe("mycel llm ping", () => {
     expect(timeline).toMatch(/→ llm-ping\/llm\/llm-0001\.json/);
   });
 });
+
+describe("mycel gsc check", () => {
+  it("explains what is missing when GSC is not configured", async () => {
+    const { gscCheck } = await import("./gsc-check.ts");
+    const runsDir = mkdtempSync(join(tmpdir(), "mycel-cli-"));
+    const res = await gscCheck({ runsDir, env: {} });
+    expect(res.ok).toBe(false);
+    expect(res.lines.join("\n")).toContain("GSC_PROPERTY is not set");
+    expect(res.timeline).toContain("status failed");
+  });
+});
