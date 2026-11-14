@@ -35,8 +35,11 @@ import { defineStep } from "../step.ts";
  * 3: same-topic merges (aliases), chain merges within one tier, a bridge needs a shared result
  * with its host page or it leaves the map.
  * 4: same topic + same tier merges without a shared result; a bridge query never names a cluster.
+ * 5: topics snap to the central entity's name; a topic that is the entity itself only merges
+ *    plain-name queries without a shared result; bridges don't add to a page's demand; the main
+ *    query prefers the plain form.
  */
-export const CLUSTER_VERSION = "4";
+export const CLUSTER_VERSION = "5";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -197,6 +200,8 @@ export interface ClusterInput {
   options: ClusterOptions;
   /** Market language, for spotting spelling variants. Default "nl". */
   language?: string;
+  /** Central entity names, to snap short topic names ("Business Central") to the full one. */
+  entities?: string[];
 }
 
 /** The pure clustering + QDP logic; the step around it fetches the SERPs. */
@@ -280,20 +285,42 @@ export function clusterQueries(input: ClusterInput): {
   }
   // Merge pass 1b: aliases. The filter model names each query's topic canonically ("Microsoft
   // Dynamics NAV" for navision, microsoft nav, dynamics nav); same topic = one cluster.
+  const entityTokens = (input.entities ?? []).map(
+    (e) => new Set(canonical(e).split(" ").filter(Boolean)),
+  );
+  const entityNames = (input.entities ?? []).map(canonical);
+  const subset = (a: string[], b: Set<string>) => a.length > 0 && a.every((t) => b.has(t));
+  /** A short form of a central entity's name ("business central") snaps to the full name. */
+  const topicOf = (q: FilteredQuery) => {
+    const t = q.topic ? canonical(q.topic) : "";
+    const i = entityTokens.findIndex((set) => subset(t.split(" "), set));
+    return i >= 0 ? (entityNames[i] as string) : t;
+  };
+  /** The query is just a name of the entity ("microsoft business central"), nothing more. */
+  const plainName = (q: FilteredQuery) =>
+    entityTokens.some((set) => subset(canonical(q.text).split(" "), set));
+  const byTopicTier = new Map<string, Draft>();
   const byTopic = new Map<string, Draft>();
   const afterTopics: Draft[] = [];
   for (const d of afterVariants) {
-    const topic = d.hub.topic ? canonical(d.hub.topic) : "";
-    const first = topic ? byTopic.get(topic) : undefined;
+    const topic = topicOf(d.hub);
+    const sameTier = topic ? byTopicTier.get(`${topic}|${tierOf(d.hub)}`) : undefined;
+    const any = topic ? byTopic.get(topic) : undefined;
     // Aliases of one thing often have unrelated SERPs, so the same tier is enough; across tiers
-    // a shared result is still needed.
-    if (
-      first &&
-      (tierOf(first.hub) === tierOf(d.hub) || intersect(d.hubKeys, first.hubKeys) >= 1)
-    ) {
-      fold(first, d, `same topic as "${first.hub.text}" (${d.hub.topic})`);
+    // a shared result is still needed. A topic that is the entity itself is too broad for that:
+    // without a shared result, only plain names of the entity merge.
+    const generic = entityNames.includes(topic);
+    let into: Draft | undefined;
+    if (sameTier && (!generic || (plainName(d.hub) && plainName(sameTier.hub)))) into = sameTier;
+    else if (any && intersect(d.hubKeys, any.hubKeys) >= 1) into = any;
+    if (into) {
+      fold(into, d, `same topic as "${into.hub.text}" (${d.hub.topic ?? topic})`);
     } else {
-      if (topic && !first) byTopic.set(topic, d);
+      if (topic) {
+        if (!byTopic.has(topic)) byTopic.set(topic, d);
+        const k = `${topic}|${tierOf(d.hub)}`;
+        if (!byTopicTier.has(k)) byTopicTier.set(k, d);
+      }
       afterTopics.push(d);
     }
   }
@@ -330,13 +357,34 @@ export function clusterQueries(input: ClusterInput): {
   const ids = new Set<string>();
   const clusters: (ClusterDetail & { _hubKeys: Set<string> })[] = kept.map((d) => {
     const qs = d.members.map((m) => m.q);
-    // The page is named after its biggest query, but never after a broader (bridge) one.
-    const main = [...qs].sort(
+    // The page is named after its biggest query, but never after a broader (bridge) one, and a
+    // plainer form wins when it has at least half the volume ("luchtzuiverende planten" over
+    // "luchtzuiverende planten onzin").
+    const ranked = [...qs].sort(
       (a, b) =>
         Number(tierOf(a) === "bridge") - Number(tierOf(b) === "bridge") ||
         (b.metrics.volume ?? -1) - (a.metrics.volume ?? -1) ||
         (b.metrics.gscImpressions ?? -1) - (a.metrics.gscImpressions ?? -1),
-    )[0] as FilteredQuery;
+    );
+    let main = ranked[0] as FilteredQuery;
+    const tokens = (q: FilteredQuery) => canonical(q.text).split(" ").filter(Boolean);
+    for (const m of ranked) {
+      const mt = tokens(m);
+      if (
+        m !== main &&
+        tierOf(m) !== "bridge" &&
+        mt.length < tokens(main).length &&
+        subset(mt, new Set(tokens(main))) &&
+        (m.metrics.volume ?? 0) * 2 >= (main.metrics.volume ?? 0)
+      ) {
+        main = m;
+      }
+    }
+    // Bridge members are mentioned on the page; they don't make its demand.
+    const demandOf =
+      TIERS.find((t) => qs.some((q) => tierOf(q) === t)) === "bridge"
+        ? qs
+        : qs.filter((q) => tierOf(q) !== "bridge");
     let id = `c-${slug(main.text)}`;
     for (let i = 2; ids.has(id); i++) id = `c-${slug(main.text)}-${i}`;
     ids.add(id);
@@ -388,8 +436,8 @@ export function clusterQueries(input: ClusterInput): {
       ...(entity ? { entity } : {}),
       members,
       demand: {
-        volume: qs.reduce((n, q) => n + (q.metrics.volume ?? 0), 0),
-        gscImpressions: qs.reduce((n, q) => n + (q.metrics.gscImpressions ?? 0), 0),
+        volume: demandOf.reduce((n, q) => n + (q.metrics.volume ?? 0), 0),
+        gscImpressions: demandOf.reduce((n, q) => n + (q.metrics.gscImpressions ?? 0), 0),
       },
       aiOverview: {
         present: hubSerp.aiOverview.present,
@@ -547,6 +595,7 @@ export function clusterStep(port: SerpBatchPort) {
         siteHost: host,
         options: input.options,
         language: input.context.market.language,
+        entities: input.context.centralEntities.map((e) => e.name),
       });
       unclustered.push(...leftOut);
       const count = (k: ClusterDetail["qdp"]) => clusters.filter((c) => c.qdp === k).length;

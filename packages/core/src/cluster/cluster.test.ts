@@ -243,6 +243,53 @@ describe("relevance tiers and merges", () => {
     expect(nav?.members.map((m) => m.query)).toContain("nav kassa");
   });
 
+  it("snaps short topic names to the entity, and only merges plain names without a shared result", () => {
+    const t = (text: string, topic: string, volume: number) => ({
+      ...q(text, { volume, label: "core", relevance: 1 }),
+      topic,
+    });
+    const r = clusterQueries({
+      queries: [
+        t("business central", "Business Central", 2470),
+        t("microsoft business central", "Microsoft Dynamics 365 Business Central", 930),
+        t("business central leidsche rijn", "Microsoft Dynamics 365 Business Central", 40),
+      ],
+      serps: new Map(
+        [
+          serp("business central", ["1", "2", "3", "4", "5", "6"]),
+          serp("microsoft business central", ["10", "11", "12", "13", "14", "15"]),
+          serp("business central leidsche rijn", ["20", "21", "22", "23", "24", "25"]),
+        ].map((x) => [x.keyword, x]),
+      ),
+      siteHost: "plant.example",
+      options: opts,
+      entities: ["Microsoft Dynamics 365 Business Central"],
+    });
+    const bc = r.clusters.find((c) => c.hub === "business central");
+    expect(bc?.members.map((m) => m.query)).toEqual([
+      "business central",
+      "microsoft business central",
+    ]);
+    expect(r.clusters.find((c) => c.hub === "business central leidsche rijn")).toBeDefined();
+  });
+
+  it("names the page after the plain form and leaves bridges out of its demand", () => {
+    const r = run(
+      [
+        q("luchtzuiverende planten onzin", { volume: 900, label: "core", relevance: 1 }),
+        q("luchtzuiverende planten", { volume: 800, label: "core", relevance: 1 }),
+        q("planten", { volume: 15000, label: "bridge", relevance: 0.25 }),
+      ],
+      [
+        serp("luchtzuiverende planten onzin", ["1", "2", "3", "4", "5", "6"]),
+        serp("luchtzuiverende planten", ["1", "2", "3", "4", "7", "8"]),
+        serp("planten", ["1", "2", "3", "9", "10", "11"]),
+      ],
+    );
+    expect(r.clusters[0]?.mainQuery).toBe("luchtzuiverende planten");
+    expect(r.clusters[0]?.demand.volume).toBe(1700);
+  });
+
   it("never names a cluster after a bridge query", () => {
     const r = run(
       [
