@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Market } from "@mycel/schema";
 import type { CallRecorder } from "../recorder.ts";
 import { type CacheEntry, FileCache, requestHash } from "./cache.ts";
+import { SpendLedger } from "./ledger.ts";
 import { marketParams } from "./locations.ts";
 import {
   type CompetitorDomain,
@@ -42,6 +43,13 @@ export interface DataforseoOptions {
   cacheDir: string;
   /** Hard ceiling for this client's paid calls (cache hits are free). */
   budgetUsd: number;
+  /**
+   * Ceiling for the calendar month across all runs that share this cache dir (ADR 0004). Spend
+   * is always written to <cacheDir>/ledger; without this option it just isn't capped.
+   */
+  monthlyBudgetUsd?: number;
+  /** Clock for the monthly ledger (tests). */
+  now?: () => Date;
   /** Paid SERP fetches only run with this flag; otherwise SERPs must come from cache (CLAUDE.md). */
   allowLiveSerp?: boolean;
   baseUrl?: string;
@@ -90,11 +98,39 @@ export class DataforseoClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly baseUrl: string;
   private readonly auth: string;
+  private readonly ledger: SpendLedger;
   private spent = 0;
+  /** Estimated cost of paid calls that are in flight right now. */
+  private reserved = 0;
+  /** Highest price seen per endpoint in this run: the estimate for the next call. */
+  private readonly price = new Map<string, number>();
+  /** Endpoints whose first paid call is still out, so its price isn't known yet. */
+  private readonly pricing = new Map<string, Promise<void>>();
 
   constructor(private readonly opts: DataforseoOptions) {
+    for (const [name, value] of [
+      ["budgetUsd", opts.budgetUsd],
+      ["monthlyBudgetUsd", opts.monthlyBudgetUsd],
+    ] as const) {
+      if (value !== undefined && !(Number.isFinite(value) && value >= 0)) {
+        // NaN would switch the cap off silently: `spent >= NaN` is never true.
+        throw new RangeError(`DataforSEO ${name} must be a number of dollars, got ${value}`);
+      }
+    }
     this.cache = new FileCache(opts.cacheDir);
     this.tasks = new PendingTasks(join(opts.cacheDir, "pending"));
+    this.ledger = new SpendLedger(join(opts.cacheDir, "ledger"), opts.now, (month) =>
+      [...this.cache.entries()]
+        .filter((e) => e.costUsd > 0 && e.fetchedAt.startsWith(month))
+        .map((e) => ({
+          at: e.fetchedAt,
+          endpoint: e.endpoint,
+          requestHash: e.hash,
+          costUsd: e.costUsd,
+        })),
+    );
+    // Load (and, the first time in a month, seed) the ledger before this run adds to it.
+    this.ledger.spentThisMonth();
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.baseUrl = opts.baseUrl ?? "https://api.dataforseo.com/v3";
@@ -104,6 +140,11 @@ export class DataforseoClient {
   /** USD spent on paid calls by this client so far. */
   get spentUsd(): number {
     return Math.round(this.spent * 1e6) / 1e6;
+  }
+
+  /** USD spent this calendar month by every run that shares this cache dir. */
+  get spentThisMonthUsd(): number {
+    return this.ledger.spentThisMonth();
   }
 
   async relatedKeywords(
@@ -217,26 +258,26 @@ export class DataforseoClient {
     hash: string,
     rec: CallRecorder,
   ): Promise<PendingTask> {
-    this.assertBudget(endpoint);
-    const posted = await this.request("POST", endpoint, [payload], rec, hash);
-    const created = posted.tasks?.[0];
-    if (!created?.id)
-      throw new DataforseoError(
-        "task_post returned no task id",
+    return this.paid(endpoint, hash, `not posting the SERP task`, async () => {
+      const posted = await this.request("POST", endpoint, [payload], rec, hash);
+      const created = posted.tasks?.[0];
+      if (!created?.id)
+        throw new DataforseoError(
+          "task_post returned no task id",
+          endpoint,
+          created?.status_code ?? 0,
+          false,
+        );
+      const task: PendingTask = {
+        taskId: created.id,
         endpoint,
-        created?.status_code ?? 0,
-        false,
-      );
-    const task: PendingTask = {
-      taskId: created.id,
-      endpoint,
-      payload,
-      postedAt: new Date().toISOString(),
-      costUsd: created.cost ?? posted.cost ?? 0,
-    };
-    this.tasks.set(hash, task);
-    this.spent += task.costUsd;
-    return task;
+        payload,
+        postedAt: new Date().toISOString(),
+        costUsd: created.cost ?? posted.cost ?? 0,
+      };
+      this.tasks.set(hash, task);
+      return { value: task, costUsd: task.costUsd };
+    });
   }
 
   /** A posted task that still waits for its result, unless it is too old to still exist. */
@@ -310,15 +351,11 @@ export class DataforseoClient {
     }
 
     // Out of budget: stop posting, still collect what is already paid for, then report it.
-    let overBudget: BudgetExceededError | undefined;
+    let overBudget: BudgetExceededError | null = null;
     const chunk = Math.min(opts.chunk ?? 100, 100);
     for (let i = 0; i < todo.length; i += chunk) {
-      if (this.spent >= this.opts.budgetUsd) {
-        overBudget = new BudgetExceededError(
-          `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); ${todo.length - i} SERPs not posted`,
-        );
-        break;
-      }
+      overBudget = this.overBudget(`${todo.length - i} SERPs not posted`);
+      if (overBudget) break;
       const part = todo.slice(i, i + chunk);
       const res = await this.request(
         "POST",
@@ -339,7 +376,7 @@ export class DataforseoClient {
           continue;
         }
         job.cost = task.cost ?? 0;
-        this.spent += job.cost;
+        this.spend(endpoint, job.hash, job.cost);
         this.tasks.set(job.hash, {
           taskId: task.id,
           endpoint,
@@ -473,37 +510,92 @@ export class DataforseoClient {
   }
 
   private async cachedLive(endpoint: string, payload: Record<string, unknown>, rec: CallRecorder) {
-    return this.cached(endpoint, payload, rec, async (hash) => {
-      const res = await this.request("POST", endpoint, [payload], rec, hash);
-      const task = res.tasks?.[0];
-      const costUsd = task?.cost ?? res.cost ?? 0;
-      this.spent += costUsd;
-      return { result: task?.result?.[0] ?? null, costUsd };
-    });
-  }
-
-  /** Cache by request hash; a hit costs nothing and is still logged. */
-  private async cached(
-    endpoint: string,
-    payload: Record<string, unknown>,
-    rec: CallRecorder,
-    fetcher: (hash: string) => Promise<{ result: unknown; costUsd: number }>,
-  ): Promise<unknown> {
     const hash = requestHash(endpoint, payload);
     const hit = this.hit(endpoint, hash, rec);
     if (hit) return hit.result;
-    this.assertBudget(endpoint);
-    const { result, costUsd } = await fetcher(hash);
+    const fresh = await this.paid(endpoint, hash, `not calling ${endpoint}`, async () => {
+      const res = await this.request("POST", endpoint, [payload], rec, hash);
+      const task = res.tasks?.[0];
+      const costUsd = task?.cost ?? res.cost ?? 0;
+      return { value: { result: task?.result?.[0] ?? null, costUsd }, costUsd };
+    });
     this.cache.set(hash, {
       endpoint,
       payload,
       fetchedAt: new Date().toISOString(),
-      costUsd,
-      result,
+      costUsd: fresh.costUsd,
+      result: fresh.result,
     });
-    return result;
+    return fresh.result;
   }
 
+  /**
+   * One paid call, with the budget check in front. Calls can run in parallel, so each one
+   * reserves its expected price while it is out; otherwise every call in a parallel burst would
+   * pass the check on the same "spent so far". The first paid call to an endpoint runs alone,
+   * because its price is only known once it is back.
+   */
+  private async paid<T>(
+    endpoint: string,
+    hash: string,
+    what: string,
+    call: () => Promise<{ value: T; costUsd: number }>,
+  ): Promise<T> {
+    for (let probe = this.pricing.get(endpoint); probe; probe = this.pricing.get(endpoint)) {
+      await probe;
+    }
+    const over = this.overBudget(what);
+    if (over) throw over;
+    const estimate = this.price.get(endpoint);
+    let priced = () => {};
+    if (estimate === undefined) {
+      this.pricing.set(
+        endpoint,
+        new Promise<void>((resolve) => {
+          priced = resolve;
+        }),
+      );
+    }
+    this.reserved += estimate ?? 0;
+    try {
+      const { value, costUsd } = await call();
+      this.price.set(endpoint, Math.max(costUsd, estimate ?? 0));
+      this.spend(endpoint, hash, costUsd);
+      return value;
+    } finally {
+      this.reserved -= estimate ?? 0;
+      if (estimate === undefined) {
+        this.pricing.delete(endpoint);
+        priced();
+      }
+    }
+  }
+
+  private spend(endpoint: string, hash: string, costUsd: number): void {
+    this.spent += costUsd;
+    this.ledger.add({ endpoint, requestHash: hash, costUsd });
+  }
+
+  /** The error to raise when the run budget or the monthly budget is used up, else null. */
+  private overBudget(what: string): BudgetExceededError | null {
+    const { budgetUsd, monthlyBudgetUsd } = this.opts;
+    if (this.spent + this.reserved >= budgetUsd) {
+      return new BudgetExceededError(
+        `DataforSEO budget of $${budgetUsd} reached ($${this.spentUsd} spent); ${what}`,
+      );
+    }
+    if (monthlyBudgetUsd !== undefined) {
+      const month = this.ledger.spentThisMonth();
+      if (month + this.reserved >= monthlyBudgetUsd) {
+        return new BudgetExceededError(
+          `DataforSEO monthly budget of $${monthlyBudgetUsd} reached ($${month} spent in ${this.ledger.currentMonth()}); ${what}`,
+        );
+      }
+    }
+    return null;
+  }
+
+  /** A cache hit costs nothing and is still logged. */
   private hit(endpoint: string, hash: string, rec: CallRecorder): CacheEntry | null {
     const hit = this.cache.get(hash);
     if (!hit) return null;
@@ -518,14 +610,6 @@ export class DataforseoClient {
       startedAt: new Date().toISOString(),
     });
     return hit;
-  }
-
-  private assertBudget(endpoint: string): void {
-    if (this.spent >= this.opts.budgetUsd) {
-      throw new BudgetExceededError(
-        `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); not calling ${endpoint}`,
-      );
-    }
   }
 
   /** One HTTP call with retries on network errors, 429, 5xx and DataforSEO 5xxxx codes. Each attempt is logged. */

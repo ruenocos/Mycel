@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ApiCallInput, CallRecorder } from "../recorder.ts";
-import { requestHash, stableStringify } from "./cache.ts";
+import { FileCache, requestHash, stableStringify } from "./cache.ts";
 import {
   BudgetExceededError,
   DataforseoClient,
@@ -256,6 +256,80 @@ describe("DataforseoClient", () => {
     const { rec } = recorder();
     await c.relatedKeywords("a", market, rec);
     await expect(c.relatedKeywords("b", market, rec)).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
+  it("refuses a budget that isn't a number", () => {
+    const make = (extra: Parameters<typeof client>[1]) => () => client(async () => ok(null), extra);
+    expect(make({ budgetUsd: Number.NaN })).toThrow(/budgetUsd must be a number/);
+    expect(make({ budgetUsd: -1 })).toThrow(RangeError);
+    expect(make({ monthlyBudgetUsd: Number("fifty") })).toThrow(/monthlyBudgetUsd/);
+  });
+
+  it("holds the budget when calls run in parallel", async () => {
+    let calls = 0;
+    const c = client(
+      async () => {
+        calls++;
+        await new Promise((r) => setTimeout(r, 5));
+        return ok({ items: [] }, 0.02);
+      },
+      { budgetUsd: 0.05 },
+    );
+    const { rec } = recorder();
+    const results = await Promise.allSettled(
+      ["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => c.relatedKeywords(k, market, rec)),
+    );
+    // Same as one after the other: calls start while under budget, so three, not eight.
+    expect(calls).toBe(3);
+    expect(c.spentUsd).toBe(0.06);
+    const refused = results.filter((r) => r.status === "rejected");
+    expect(refused).toHaveLength(5);
+    expect(refused.every((r) => r.reason instanceof BudgetExceededError)).toBe(true);
+  });
+
+  it("keeps a monthly total across runs and stops at the monthly budget", async () => {
+    const { rec } = recorder();
+    const nov = () => new Date("2026-11-14T09:00:00Z");
+    const run = (now: () => Date) =>
+      client(async () => ok({ items: [] }, 0.02), { monthlyBudgetUsd: 0.03, now });
+
+    const first = run(nov);
+    await first.relatedKeywords("a", market, rec);
+    await first.relatedKeywords("b", market, rec);
+    expect(first.spentThisMonthUsd).toBe(0.04);
+
+    // A new run has a fresh run budget, but the month is used up. Cached calls still work.
+    const second = run(nov);
+    expect(second.spentUsd).toBe(0);
+    expect(second.spentThisMonthUsd).toBe(0.04);
+    await expect(second.relatedKeywords("c", market, rec)).rejects.toThrow(
+      /monthly budget of \$0.03 reached \(\$0.04 spent in 2026-11\)/,
+    );
+    await expect(second.relatedKeywords("a", market, rec)).resolves.toEqual([]);
+
+    const december = run(() => new Date("2026-12-01T00:00:01Z"));
+    expect(december.spentThisMonthUsd).toBe(0);
+    await expect(december.relatedKeywords("c", market, rec)).resolves.toEqual([]);
+  });
+
+  it("counts what the cache says was already spent this month, once", async () => {
+    new FileCache(cacheDir).set("ab".repeat(16), {
+      endpoint: "dataforseo_labs/google/related_keywords/live",
+      payload: {},
+      fetchedAt: "2026-11-03T10:00:00.000Z",
+      costUsd: 0.5,
+      result: null,
+    });
+    new FileCache(cacheDir).set("cd".repeat(16), {
+      endpoint: "dataforseo_labs/google/related_keywords/live",
+      payload: {},
+      fetchedAt: "2026-10-30T10:00:00.000Z",
+      costUsd: 9,
+      result: null,
+    });
+    const now = () => new Date("2026-11-14T09:00:00Z");
+    expect(client(async () => ok(null), { now }).spentThisMonthUsd).toBe(0.5);
+    expect(client(async () => ok(null), { now }).spentThisMonthUsd).toBe(0.5);
   });
 
   it("blocks paid SERP calls unless allowed, but serves cached SERPs", async () => {

@@ -92,18 +92,26 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
         },
       ) => {
         const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        const res = await contextPropose({
-          runsDir,
-          site,
-          provider: opts.provider,
-          model: opts.model,
-          gsc: opts.gsc,
-          dataforseo: opts.dataforseo,
-          budgetUsd: Number(opts.budget),
-          ...(opts.market ? { market: opts.market } : {}),
-          ...(opts.out ? { out: opts.out } : {}),
-          ...(opts.debug ? { debug: true } : {}),
-        });
+        let res: Awaited<ReturnType<typeof contextPropose>>;
+        try {
+          res = await contextPropose({
+            runsDir,
+            site,
+            provider: opts.provider,
+            model: opts.model,
+            gsc: opts.gsc,
+            dataforseo: opts.dataforseo,
+            budgetUsd: Number(opts.budget),
+            ...(opts.market ? { market: opts.market } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          // Raised before a run exists (a bad --budget): nothing to log yet.
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
         for (const l of res.lines) out(l);
         out("");
         out(res.timeline);

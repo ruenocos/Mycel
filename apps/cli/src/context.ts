@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
-  DataforseoClient,
   FakeProvider,
   GscClient,
   LlmClient,
@@ -27,6 +26,7 @@ import {
   showField,
 } from "@mycel/core";
 import { ClientContext, Market, SitePages } from "@mycel/schema";
+import { dataforseoFromEnv, runBudget } from "./dataforseo.ts";
 
 /**
  * `mycel context propose` and `mycel context confirm` (issue #15, Koray steps 1-6).
@@ -104,6 +104,7 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
   const env = opts.env ?? process.env;
   const cacheDir = opts.cacheDir ?? ".cache";
   const lines: string[] = [];
+  const budgetUsd = runBudget(opts.budgetUsd, 0.5);
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: isUrl(opts.site) ? new URL(opts.site).hostname : basename(opts.site),
@@ -163,13 +164,9 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
             property: property ?? null,
           });
         }
-        if (opts.dataforseo !== false && env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD) {
-          const dfs = new DataforseoClient({
-            login: env.DATAFORSEO_LOGIN,
-            password: env.DATAFORSEO_PASSWORD,
-            cacheDir: join(cacheDir, "dataforseo"),
-            budgetUsd: opts.budgetUsd ?? 0.5,
-          });
+        const dfs =
+          opts.dataforseo !== false ? dataforseoFromEnv(env, { cacheDir, budgetUsd }) : undefined;
+        if (dfs) {
           const ranked = await dfs.rankedKeywords(host, market, ctx, { limit: 100 });
           extras.rankedKeywords = ranked
             .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
