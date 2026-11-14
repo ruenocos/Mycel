@@ -1,12 +1,13 @@
 # Test clients
 
-Two fictional clients that prove the pipeline is generic (ADR 0007). Everything here is
+Fictional clients that prove the pipeline is generic (ADR 0007). Everything here is
 synthetic, so it may live in the repo (ADR 0008). Real client data never goes here.
 
-| Client                  | Type                     | Stress test                                   |
-| ----------------------- | ------------------------ | --------------------------------------------- |
-| `plantpost`             | Houseplant webshop, B2C  | Buying intent, category vs product vs guide   |
-| `praktijk-beweegruimte` | Physio practice, Utrecht | Local intent, location × service, health info |
+| Client                  | Type                     | Stress test                                                                     |
+| ----------------------- | ------------------------ | ------------------------------------------------------------------------------- |
+| `plantpost`             | Houseplant webshop, B2C  | Buying intent, category vs product vs guide                                     |
+| `praktijk-beweegruimte` | Physio practice, Utrecht | Local intent, location × service, health info                                   |
+| `dakwerken-maasstad`    | Roofer, Rotterdam        | Blind test: added after clustering was tuned on the other three; never tuned on |
 
 Each client folder holds:
 
