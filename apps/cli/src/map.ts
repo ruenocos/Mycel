@@ -24,15 +24,23 @@ import {
  * step: data builds the tree, the model names each page and places pages whose words don't nest.
  */
 
-/** The fake model labels every page, keeps its likely existing pages and leaves hubs at the root. */
+/**
+ * The fake model labels every page and leaves hubs at the root; asked to link existing pages,
+ * it picks each page's first likely map page, else "none".
+ */
 function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   const fake = new FakeProvider([], (req) => {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
-    const pages = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
-      i: number;
-      page: string;
-      likely?: string[];
-    }[];
+    if (user.includes("\nMap pages:\n")) {
+      const existing = JSON.parse(user.split("\nExisting pages:\n")[1] ?? "[]") as {
+        p: number;
+        likely?: string[];
+      }[];
+      return JSON.stringify({
+        results: existing.map((e) => ({ p: e.p, node: e.likely?.[0] ?? "none" })),
+      });
+    }
+    const pages = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as { i: number; page: string }[];
     return JSON.stringify({
       results: pages.map((p) => ({
         i: p.i,
@@ -40,7 +48,6 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
         macroContext: p.page,
         why: `fake label for ${p.page}`,
         parent: "root",
-        pages: p.likely ?? [],
       })),
     });
   });

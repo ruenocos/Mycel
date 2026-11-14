@@ -11,21 +11,19 @@ import {
   type MapPlan,
   type NodeDraft,
   type NodeLabel,
-  type PageRef,
-  pageCandidates,
   planMaps,
-  scorePages,
 } from "./build.ts";
+import { linkPages } from "./link.ts";
 
 /**
  * Step 11-14 and 20, the model half (issue #19). Data already fixed the pages, tiers, intent and
  * most of the hierarchy. The model only adds what words and numbers can't: the raw node's
  * attribute, one macro context per page, a plain "why", and a hub for top-level pages whose words
- * don't nest under another page, and which existing pages serve each page's search (it reads
- * meaning, so "XL planten" can be the big-plants page). It never adds pages, queries or numbers.
+ * don't nest under another page. Existing pages are linked in a second pass (link.ts). It never
+ * adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "3" } as const;
+export const MAP_TEMPLATE = { id: "map-label", version: "4" } as const;
 
 /**
  * Step logic version (planner + prompt); bump when either changes. 1: first map.
@@ -33,8 +31,10 @@ export const MAP_TEMPLATE = { id: "map-label", version: "3" } as const;
  *    the model links existing pages from weighted word candidates; one voice for "why".
  * 3: word matches always count, the model adds pages by meaning; a top-level page needs a hub
  *    answer (asked again); pages with the same words fold together; batches of 15.
+ * 4: existing pages are linked page by page (each picks the map page it serves, link.ts);
+ *    outer URLs sit under their seed's slug.
  */
-export const MAP_STEP_VERSION = "3";
+export const MAP_STEP_VERSION = "4";
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -45,8 +45,6 @@ export const LabelAnswer = z.object({
       why: z.string().max(300).nullish(),
       /** Only for top-level pages: a hub id ("h3") or "root". */
       parent: z.string().max(20).nullish(),
-      /** Ids of existing pages ("p3") that serve this page's search. */
-      pages: z.array(z.string().max(12)).nullish(),
     }),
   ),
 });
@@ -55,25 +53,14 @@ export type LabelAnswer = z.infer<typeof LabelAnswer>;
 /** Most hubs offered per prompt: core first, then demand. Enough for every map we have seen. */
 const MAX_HUBS = 120;
 
-/** Most existing pages listed per prompt: word candidates first. */
-const MAX_PAGES = 250;
-
-/** The client's existing pages as the model sees them, with ids, and each node's candidates. */
-export interface PageList {
-  pages: { id: string; url: string; title: string; h1: string }[];
-  candidates: Map<string, string[]>;
-}
-
 export function buildLabelMessages(
   ctx: ClientContext,
   entity: string,
   batch: NodeDraft[],
   hubs: NodeDraft[],
   byId: Map<string, NodeDraft>,
-  site: PageList = { pages: [], candidates: new Map() },
 ) {
   const lang = languageName(ctx.market.language);
-  const withPages = site.pages.length > 0;
   const hubKey = new Map(hubs.map((h, i) => [h.id, `h${i}`]));
   const system = [
     `You help build a topical map for one business: a tree of pages around the central entity "${entity}". The pages, their search queries, tier (core or outer) and search intent are already decided from search data. Do not change them, and do not invent facts, numbers or queries.`,
@@ -82,13 +69,8 @@ export function buildLabelMessages(
     `- "macroContext": in ${lang}, one sentence that describes the single main angle of the page, so two pages never cover the same thing. Describe it neutrally; don't address anyone.`,
     `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our").`,
     `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"), or "root" when it belongs directly under "${entity}". Choose a hub only when the page is clearly a narrower part of that hub's topic. A core page never goes under an outer hub. Never pick the page itself.`,
-    withPages
-      ? `- "pages": ids from the existing pages list (e.g. ["p3"]) whose main topic is this page's search: someone searching it would land well on that page. Judge meaning, not shared words: a page about one product or one town is not the page for the general search. Other words can mean the same (prices = costs = rates, XL = large), so look past the "likely" hints, which only share words. List every existing page that targets this search: two pages on one search is the cannibalisation the owner must see. [] when none.`
-      : "",
-    `Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","parent":"h3"${withPages ? ',"pages":[]' : ""}}]}. Answer every number exactly once.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    'Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","parent":"h3"}]}. Answer every number exactly once.',
+  ].join("\n");
   const profile = {
     business: ctx.site.name,
     market: ctx.market,
@@ -111,9 +93,6 @@ export function buildLabelMessages(
       : n.parentId
         ? { under: byId.get(n.parentId)?.mainQuery }
         : { topLevel: true }),
-    ...(withPages && site.candidates.get(n.id)?.length
-      ? { likely: site.candidates.get(n.id) }
-      : {}),
   }));
   const hubList = hubs.map((h) => ({
     id: hubKey.get(h.id),
@@ -124,11 +103,7 @@ export function buildLabelMessages(
     { role: "system" as const, content: system },
     {
       role: "user" as const,
-      content: `Profile:\n${JSON.stringify(profile, null, 2)}\n\nHubs:\n${JSON.stringify(hubList)}${
-        withPages
-          ? `\n\nExisting pages:\n${site.pages.map((p) => JSON.stringify(p)).join("\n")}`
-          : ""
-      }\n\nPages:\n${JSON.stringify(pages, null, 1)}`,
+      content: `Profile:\n${JSON.stringify(profile, null, 2)}\n\nHubs:\n${JSON.stringify(hubList)}\n\nPages:\n${JSON.stringify(pages, null, 1)}`,
     },
   ];
 }
@@ -164,7 +139,7 @@ function costMeter(ctx: StepContext) {
 export async function labelPlan(
   llm: JsonModel,
   plan: MapPlan,
-  opts: { model: string; batchSize: number; concurrency: number; pages?: PageRef[] },
+  opts: { model: string; batchSize: number; concurrency: number },
   ctx: StepContext,
 ): Promise<Map<string, NodeLabel>> {
   const labels = new Map<string, NodeLabel>();
@@ -173,37 +148,8 @@ export async function labelPlan(
     batch: NodeDraft[];
     hubs: NodeDraft[];
     byId: Map<string, NodeDraft>;
-    site: PageList;
-    urlOf: Map<string, string>;
   }[] = [];
-  const existing = (opts.pages ?? []).filter(
-    (p) => p.url !== "/" && !["home", "about", "contact"].includes(p.kind),
-  );
-  let invalidPages = 0;
   for (const { entity, nodes } of plan.entities) {
-    const scores = scorePages(nodes, existing, plan.context);
-    const cand = new Map(nodes.map((n) => [n.id, pageCandidates(scores, n.id)]));
-    const wanted = new Set([...cand.values()].flat());
-    const listed = [
-      ...existing.filter((p) => wanted.has(p.url)),
-      ...existing.filter((p) => !wanted.has(p.url)),
-    ].slice(0, MAX_PAGES);
-    const idOf = new Map(listed.map((p, i) => [p.url, `p${i}`]));
-    const site: PageList = {
-      pages: listed.map((p) => ({
-        id: idOf.get(p.url) as string,
-        url: p.url,
-        title: p.title,
-        h1: p.h1,
-      })),
-      candidates: new Map(
-        [...cand].map(([id, urls]) => [
-          id,
-          urls.map((u) => idOf.get(u)).filter((x): x is string => !!x),
-        ]),
-      ),
-    };
-    const urlOf = new Map(listed.map((p) => [idOf.get(p.url) as string, p.url]));
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const hubs = hubChoices(plan, entity)
       .hubs.slice()
@@ -212,7 +158,7 @@ export async function labelPlan(
       )
       .slice(0, MAX_HUBS);
     for (let i = 0; i < nodes.length; i += opts.batchSize) {
-      work.push({ entity, batch: nodes.slice(i, i + opts.batchSize), hubs, byId, site, urlOf });
+      work.push({ entity, batch: nodes.slice(i, i + opts.batchSize), hubs, byId });
     }
   }
   let invalidHubs = 0;
@@ -223,7 +169,7 @@ export async function labelPlan(
       {
         model: opts.model,
         template: MAP_TEMPLATE,
-        messages: buildLabelMessages(plan.context, w.entity, w.batch, w.hubs, w.byId, w.site),
+        messages: buildLabelMessages(plan.context, w.entity, w.batch, w.hubs, w.byId),
         params: { temperature: 0, seed },
       },
       LabelAnswer,
@@ -246,11 +192,6 @@ export async function labelPlan(
           if (pick) invalidHubs++;
           continue;
         } else defaultedHubs++;
-      }
-      if (w.site.pages.length && !n.isRoot) {
-        const urls = (r.pages ?? []).map((id) => w.urlOf.get(id.trim()));
-        invalidPages += urls.filter((u) => !u).length;
-        label.pages = [...new Set(urls.filter((u): u is string => !!u))];
       }
       labels.set(n.id, label);
     }
@@ -278,7 +219,6 @@ export async function labelPlan(
   if (invalidHubs) ctx.log.warn("model picked hubs that don't exist; asked again", { invalidHubs });
   if (defaultedHubs)
     ctx.log.warn("no hub after a retry; page stays under the root", { defaultedHubs });
-  if (invalidPages) ctx.log.warn("model named existing pages that don't exist", { invalidPages });
   return labels;
 }
 
@@ -305,18 +245,21 @@ export function mapStep(llm: JsonModel) {
       const labels = await labelPlan(
         llm,
         plan,
-        {
-          model: input.model,
-          batchSize: input.batchSize,
-          concurrency: input.concurrency,
-          pages: input.pages,
-        },
+        { model: input.model, batchSize: input.batchSize, concurrency: input.concurrency },
+        meter.rec,
+      );
+      const pageLinks = await linkPages(
+        llm,
+        plan,
+        input.pages,
+        { model: input.model, concurrency: input.concurrency },
         meter.rec,
       );
       return finishMaps({
         plan,
         labels,
         pages: input.pages,
+        pageLinks,
         runId: ctx.runId,
         createdAt: new Date().toISOString(),
         costUsd: meter.total(),

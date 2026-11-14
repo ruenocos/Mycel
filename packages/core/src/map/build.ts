@@ -496,6 +496,8 @@ export function finishMaps(input: {
   plan: MapPlan;
   labels: Map<string, NodeLabel>;
   pages?: PageRef[];
+  /** Existing page URL → the node it serves (null: none), from the model (link.ts). */
+  pageLinks?: Map<string, string | null>;
   runId: string;
   createdAt: string;
   costUsd: number;
@@ -562,45 +564,20 @@ export function finishMaps(input: {
     const kindOf = new Map(pageList.map((p) => [p.url, p.kind]));
     const scores = scorePages(nodes, pageList, ctx);
     const scoreOf = (url: string, id: string) => scores.get(url)?.get(id) ?? { score: 0, h1: 0 };
-    let linked: Map<string, string[]>;
-    if (nodes.some((n) => labels.get(n.id)?.pages !== undefined)) {
-      // Word matches always count; the model adds what only meaning shows.
-      const claims = new Map<string, NodeDraft[]>();
-      for (const [id, urls] of matchPages(nodes, pageList, ctx, scores)) {
-        const n = byId.get(id);
-        if (!n || n.isRoot) continue;
-        for (const url of urls) claims.set(url, [...(claims.get(url) ?? []), n]);
-      }
-      for (const n of nodes) {
-        if (n.isRoot) continue;
-        for (const url of labels.get(n.id)?.pages ?? []) {
-          const kind = kindOf.get(url);
-          if (!kind || SKIP_KINDS.has(kind) || url === "/") continue;
-          claims.set(url, [...(claims.get(url) ?? []), n]);
-        }
-      }
-      linked = new Map();
-      const home = pageList.find(isHome);
-      if (home) linked.set(root.id, [home.url]);
-      for (const [url, by] of claims) {
-        const rank = (n: NodeDraft) => {
-          const s = scoreOf(url, n.id);
-          return s.score + s.h1;
-        };
-        // A page claimed by several nodes: the one claimed most (words and model agree), then
-        // the best word score, then the bigger page.
-        const votes = new Map<string, number>();
-        for (const n of by) votes.set(n.id, (votes.get(n.id) ?? 0) + 1);
-        const best = [...new Set(by)].sort(
-          (a, b) =>
-            (votes.get(b.id) ?? 0) - (votes.get(a.id) ?? 0) ||
-            rank(b) - rank(a) ||
-            b.volume - a.volume,
-        )[0] as NodeDraft;
-        linked.set(best.id, [...(linked.get(best.id) ?? []), url]);
-      }
-    } else {
-      linked = matchPages(nodes, pageList, ctx, scores);
+    // The model's page-by-page answer when it gave one ("none" included); else, and for pages
+    // it skipped, the word score.
+    const words = matchPages(nodes, pageList, ctx, scores);
+    const wordNode = new Map<string, string>();
+    for (const [id, urls] of words) for (const url of urls) wordNode.set(url, id);
+    const linked = new Map<string, string[]>();
+    const add = (id: string, url: string) => linked.set(id, [...(linked.get(id) ?? []), url]);
+    const home = pageList.find(isHome);
+    if (home) add(root.id, home.url);
+    for (const page of pageList) {
+      if (isHome(page) || SKIP_KINDS.has(page.kind)) continue;
+      const judged = input.pageLinks?.has(page.url);
+      const id = judged ? input.pageLinks?.get(page.url) : wordNode.get(page.url);
+      if (id && byId.has(id) && id !== root.id) add(id, page.url);
     }
     const pagesOf = (n: NodeDraft) =>
       (linked.get(n.id) ?? [])
@@ -617,19 +594,28 @@ export function finishMaps(input: {
       return u;
     };
     const urlOf = new Map<string, string>();
-    const coreParentSlug = (n: NodeDraft): string => {
-      const p = byId.get(parent.get(n.id) ?? "");
-      return p && !p.isRoot ? slugify(p.mainQuery) : "";
+    const seedOf = (n: NodeDraft): NodeDraft | undefined => {
+      let cur: NodeDraft | undefined = n;
+      while (cur && parent.get(cur.id) !== root.id) cur = byId.get(parent.get(cur.id) ?? "");
+      return cur;
     };
-    for (const n of [root, ...ranked]) {
+    const lastSegment = (url: string) => url.split("/").filter(Boolean).pop() ?? "";
+    // Core pages and seeds first (flat), then outer pages under their seed's slug, so every
+    // outer page in one branch shares one folder: /fysio-dry-needling/dry-needling-nek/.
+    const flatFirst = [root, ...ranked].sort((a, b) => Number(isNested(a)) - Number(isNested(b)));
+    function isNested(n: NodeDraft) {
+      return !n.isRoot && n.section === "outer" && parent.get(n.id) !== root.id;
+    }
+    for (const n of flatFirst) {
       const existing = pagesOf(n)[0];
       let url: string;
       if (existing) url = existing.url;
       else if (n.isRoot) url = "/";
-      else if (n.section === "core") url = `/${slugify(n.mainQuery)}/`;
+      else if (!isNested(n)) url = `/${slugify(n.mainQuery)}/`;
       else {
-        const hub = coreParentSlug(n);
-        url = hub ? `/${hub}/${slugify(n.mainQuery)}/` : `/${slugify(n.mainQuery)}/`;
+        const seed = seedOf(n);
+        const folder = seed && seed !== n ? lastSegment(urlOf.get(seed.id) ?? "") : "";
+        url = folder ? `/${folder}/${slugify(n.mainQuery)}/` : `/${slugify(n.mainQuery)}/`;
       }
       if (existing) used.add(url);
       urlOf.set(n.id, existing ? url : unique(url));

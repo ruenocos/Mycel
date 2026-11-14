@@ -26,6 +26,7 @@ import {
 } from "./build.ts";
 import { checkGate } from "./gate.ts";
 import { type LabelAnswer, mapStep } from "./label.ts";
+import { buildLinkMessages, type LinkAnswer, linkablePages } from "./link.ts";
 
 const fixture = (file: string) =>
   JSON.parse(readFileSync(join(__dirname, "../../../../fixtures/clients/plantpost", file), "utf8"));
@@ -124,12 +125,13 @@ const queries: FilteredQuery[] = [
 ];
 
 /**
- * A stub model: labels every page, picks hubs from a fixed list by page name, and links the
- * "likely" existing pages (plus extra ones by URL) the way a model that reads meaning would.
+ * A stub model. Label prompts: labels every page and picks hubs from a fixed list by page name.
+ * Link prompts: each existing page picks a map page by URL override (a main query, or "none"),
+ * else its first "likely" hint, the way a model that reads meaning would.
  */
 function stub(
   hubs: Record<string, string> = {},
-  links: Record<string, string[]> = {},
+  links: Record<string, string> = { "/kamerplanten/xl-planten/": "grote kamerplant kopen" },
 ): JsonModel & { calls: number; prompts: string[] } {
   const model = {
     calls: 0,
@@ -141,35 +143,53 @@ function stub(
       model.calls++;
       const user = req.messages[1]?.content ?? "";
       model.prompts.push(user);
+      if (user.includes("\nMap pages:\n")) return schema.parse(answerLinks(user, links));
       const section = (name: string) => user.split(`\n${name}:\n`)[1]?.split("\n\n")[0] ?? "";
       const hubList = JSON.parse(section("Hubs") || "[]") as { id: string; page: string }[];
-      const existing = section("Existing pages")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as { id: string; url: string });
       const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
         i: number;
         page: string;
         topLevel?: boolean;
-        likely?: string[];
       }[];
       const results: LabelAnswer["results"] = list.map((p) => {
         const want = hubs[p.page];
         const hub = want === "root" ? "root" : hubList.find((h) => h.page === want)?.id;
-        const extra = (links[p.page] ?? []).map((u) => existing.find((e) => e.url === u)?.id ?? "");
         return {
           i: p.i,
           attribute: p.page,
           macroContext: `Over ${p.page}`,
           why: `Een eigen pagina voor ${p.page}.`,
           ...(p.topLevel && hub ? { parent: hub } : {}),
-          pages: [...(p.likely ?? []), ...extra],
         };
       });
       return schema.parse({ results });
     },
   };
   return model as unknown as JsonModel & { calls: number; prompts: string[] };
+}
+
+/** Answers a link prompt: URL override by main query (or "none"), else the first hint. */
+function answerLinks(user: string, links: Record<string, string>): LinkAnswer {
+  const mapLines = (user.split("\nMap pages:\n")[1] ?? "").split("\n\n")[0] ?? "";
+  const byQuery = new Map(
+    mapLines
+      .split("\n")
+      .map((l) => /^(n\d+): (.*) \((?:home|core|outer)\)$/.exec(l))
+      .filter((m): m is RegExpExecArray => !!m)
+      .map((m) => [m[2] as string, m[1] as string]),
+  );
+  const existing = JSON.parse(user.split("\nExisting pages:\n")[1] ?? "[]") as {
+    p: number;
+    url: string;
+    likely?: string[];
+  }[];
+  return {
+    results: existing.map((e) => {
+      const want = links[e.url];
+      if (want === "none") return { p: e.p, node: "none" };
+      return { p: e.p, node: (want && byQuery.get(want)) || e.likely?.[0] || "none" };
+    }),
+  };
 }
 
 const newRun = () =>
@@ -386,8 +406,9 @@ describe("mapStep", () => {
     let calls = 0;
     const model: JsonModel = {
       async generateJson(req, schema) {
-        calls++;
         const user = req.messages[1]?.content ?? "";
+        if (user.includes("\nMap pages:\n")) return schema.parse({ results: [] });
+        calls++;
         const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
           i: number;
           page: string;
@@ -412,12 +433,39 @@ describe("mapStep", () => {
     expect(node(maps, "kamerplant verpotten").level).toBe("seed");
   });
 
+  it('lets the model\'s "none" overrule a word match', async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(stub({}, { "/kamerplanten/grote-kamerplanten/": "none" })),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    const grote = node(maps, "grote kamerplant kopen");
+    expect(grote.existingPage?.url).toBe("/kamerplanten/xl-planten/");
+    expect(grote.conflict).toBeFalsy();
+  });
+
+  it("puts a new outer page in its seed's folder", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub(
+          { "gele bladeren kamerplant": "kamerplant verpotten" },
+          { "/verzorging/gele-bladeren/": "none" },
+        ),
+      ),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    const gele = node(maps, "gele bladeren kamerplant");
+    expect(gele.existingPage).toBeNull();
+    expect(gele.proposedUrl).toBe("/kamerplant-verpotten/gele-bladeren-kamerplant/");
+  });
+
   it("keeps word matches when the model links nothing", async () => {
     const lazy: JsonModel = {
       async generateJson(req, schema) {
         const user = req.messages[1]?.content ?? "";
         const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as { i: number }[];
-        return schema.parse({ results: list.map((p) => ({ i: p.i, parent: "root", pages: [] })) });
+        return schema.parse({ results: list.map((p) => ({ i: p.i, parent: "root" })) });
       },
     };
     const maps = await runStep(newRun(), mapStep(lazy), {
@@ -446,6 +494,24 @@ describe("mapStep", () => {
     await expect(
       runStep(newRun(), mapStep(lazy), { context, clusters, queries, pages, model: "fake" }),
     ).rejects.toThrow(/unlabeled after a retry/);
+  });
+});
+
+describe("buildLinkMessages", () => {
+  it("lists every map page and each existing page with its hints, skipping home and about", () => {
+    const nodes = planMaps({ context, clusters, queries }).entities[0]?.nodes ?? [];
+    const linkable = linkablePages(pages);
+    expect(linkable.some((p) => p.url === "/")).toBe(false);
+    const [system, user] = buildLinkMessages(
+      context,
+      "kamerplant",
+      nodes,
+      linkable.map((page) => ({ page, likely: ["n1"] })),
+    );
+    expect(system?.content).toContain('"none"');
+    expect(user?.content).toContain("n0: kamerplanten (home)");
+    expect(user?.content).toContain('"url": "/kamerplanten/xl-planten/"');
+    expect(user?.content).toContain('"likely"');
   });
 });
 
