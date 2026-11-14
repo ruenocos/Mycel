@@ -1,6 +1,7 @@
+import { join } from "node:path";
 import type { Market } from "@mycel/schema";
 import type { CallRecorder } from "../recorder.ts";
-import { FileCache, requestHash } from "./cache.ts";
+import { type CacheEntry, FileCache, requestHash } from "./cache.ts";
 import { marketParams } from "./locations.ts";
 import {
   type CompetitorDomain,
@@ -13,6 +14,7 @@ import {
   type RankedKeyword,
   type SerpResult,
 } from "./parse.ts";
+import { type PendingTask, PendingTasks } from "./pending.ts";
 
 export class DataforseoError extends Error {
   override name = "DataforseoError";
@@ -75,9 +77,15 @@ export interface SerpBatchResult {
 
 const SERVICE = "dataforseo";
 const TASK_PENDING = new Set([20100, 40601, 40602]); // created, handed, in queue
+/** DataforSEO keeps standard-queue results for 30 days; older saved task ids are posted again. */
+const PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+/** A task whose task_get keeps failing is left for the next run after this many tries. */
+const COLLECT_MAX_ERRORS = 3;
+const KEPT = "the task id is saved, so the next run collects it without paying again";
 
 export class DataforseoClient {
   private readonly cache: FileCache;
+  private readonly tasks: PendingTasks;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly baseUrl: string;
@@ -86,6 +94,7 @@ export class DataforseoClient {
 
   constructor(private readonly opts: DataforseoOptions) {
     this.cache = new FileCache(opts.cacheDir);
+    this.tasks = new PendingTasks(join(opts.cacheDir, "pending"));
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.baseUrl = opts.baseUrl ?? "https://api.dataforseo.com/v3";
@@ -150,6 +159,8 @@ export class DataforseoClient {
   /**
    * Organic SERP via the standard queue (task_post + task_get): cheaper than live, and the
    * standard queue resolves Google's goto redirect URLs that live mode often leaves unresolved.
+   * The task id is saved at post time; a run that stops before the result is in collects the
+   * same task next time instead of paying again.
    */
   async serpOrganic(
     keyword: string,
@@ -164,38 +175,93 @@ export class DataforseoClient {
       device: opts.device ?? "desktop",
       depth: opts.depth ?? 10,
     };
-    const result = await this.cached(endpoint, payload, rec, async (hash) => {
+    const hash = requestHash(endpoint, payload);
+    const hit = this.hit(endpoint, hash, rec);
+    if (hit) return parseSerp(keyword, hit.result);
+
+    let task = this.savedTask(hash, rec);
+    if (!task) {
       if (!this.opts.allowLiveSerp) {
         throw new LiveCallBlockedError(
           `SERP for "${keyword}" is not cached and paid SERP calls are off (enable allowLiveSerp)`,
         );
       }
-      const posted = await this.request("POST", endpoint, [payload], rec, hash);
-      const task = posted.tasks?.[0];
-      if (!task?.id)
-        throw new DataforseoError(
-          "task_post returned no task id",
-          endpoint,
-          task?.status_code ?? 0,
-          false,
-        );
-      const costUsd = task.cost ?? posted.cost ?? 0;
-      this.spent += costUsd;
-      const got = await this.pollTask(
-        `serp/google/organic/task_get/advanced/${task.id}`,
+      task = await this.postSerpTask(endpoint, payload, hash, rec);
+    }
+    let result: unknown;
+    try {
+      result = await this.pollTask(
+        `serp/google/organic/task_get/advanced/${task.taskId}`,
         rec,
         hash,
       );
-      return { result: got, costUsd };
+    } catch (err) {
+      // A task DataforSEO no longer has (or that failed for good) is posted fresh next time.
+      if (err instanceof DataforseoError && !err.retryable) this.tasks.delete(hash);
+      throw err;
+    }
+    this.cache.set(hash, {
+      endpoint,
+      payload,
+      fetchedAt: new Date().toISOString(),
+      costUsd: task.costUsd,
+      result,
     });
+    this.tasks.delete(hash);
     return parseSerp(keyword, result);
+  }
+
+  private async postSerpTask(
+    endpoint: string,
+    payload: Record<string, unknown>,
+    hash: string,
+    rec: CallRecorder,
+  ): Promise<PendingTask> {
+    this.assertBudget(endpoint);
+    const posted = await this.request("POST", endpoint, [payload], rec, hash);
+    const created = posted.tasks?.[0];
+    if (!created?.id)
+      throw new DataforseoError(
+        "task_post returned no task id",
+        endpoint,
+        created?.status_code ?? 0,
+        false,
+      );
+    const task: PendingTask = {
+      taskId: created.id,
+      endpoint,
+      payload,
+      postedAt: new Date().toISOString(),
+      costUsd: created.cost ?? posted.cost ?? 0,
+    };
+    this.tasks.set(hash, task);
+    this.spent += task.costUsd;
+    return task;
+  }
+
+  /** A posted task that still waits for its result, unless it is too old to still exist. */
+  private savedTask(hash: string, rec: CallRecorder): PendingTask | null {
+    const task = this.tasks.get(hash);
+    if (!task) return null;
+    if (Date.now() - Date.parse(task.postedAt) > PENDING_MAX_AGE_MS) {
+      rec.log.warn("saved SERP task is too old to collect, posting it again", {
+        taskId: task.taskId,
+        postedAt: task.postedAt,
+      });
+      this.tasks.delete(hash);
+      return null;
+    }
+    rec.log.debug("collecting a SERP task posted by an earlier run", { taskId: task.taskId });
+    return task;
   }
 
   /**
    * Many organic SERPs through the standard queue: up to 100 tasks per task_post, then
    * tasks_ready + task_get for each. Shares the cache with serpOrganic (same request hash), so
    * cached keywords cost nothing. The budget is checked before every batch post, so a run can
-   * overshoot by at most one batch (100 SERPs, about $0.06).
+   * overshoot by at most one batch (100 SERPs, about $0.06). Task ids are saved at post time:
+   * what a run paid for but couldn't collect (timeout, crash) is collected by the next run.
+   * One failing task never takes the batch down with it.
    */
   async serpOrganicBatch(
     keywords: string[],
@@ -207,8 +273,15 @@ export class DataforseoClient {
     const serps = new Map<string, SerpResult>();
     const blocked: string[] = [];
     const failed: SerpBatchResult["failed"] = [];
-    type Job = { keyword: string; payload: Record<string, unknown>; hash: string; cost: number };
+    type Job = {
+      keyword: string;
+      payload: Record<string, unknown>;
+      hash: string;
+      cost: number;
+      errors: number;
+    };
     const todo: Job[] = [];
+    const pending = new Map<string, Job>();
     for (const keyword of [...new Set(keywords)]) {
       const payload = {
         keyword,
@@ -217,36 +290,34 @@ export class DataforseoClient {
         depth: opts.depth ?? 10,
       };
       const hash = requestHash(endpoint, payload);
-      const hit = this.cache.get(hash);
+      const hit = this.hit(endpoint, hash, rec);
       if (hit) {
-        rec.recordApiCall({
-          service: SERVICE,
-          endpoint,
-          requestHash: hash,
-          cache: "hit",
-          costUsd: 0,
-          latencyMs: 0,
-          status: 200,
-          startedAt: new Date().toISOString(),
-        });
         serps.set(keyword, parseSerp(keyword, hit.result));
+        continue;
+      }
+      // Already paid for by an earlier run: collect it, even with paid SERP calls off.
+      const saved = this.savedTask(hash, rec);
+      if (saved) {
+        pending.set(saved.taskId, { keyword, payload, hash, cost: saved.costUsd, errors: 0 });
       } else if (!this.opts.allowLiveSerp) {
         blocked.push(keyword);
       } else {
-        todo.push({ keyword, payload, hash, cost: 0 });
+        todo.push({ keyword, payload, hash, cost: 0, errors: 0 });
       }
     }
     if (blocked.length) {
       rec.log.warn("SERPs not cached and paid SERP calls are off", { count: blocked.length });
     }
 
-    const pending = new Map<string, Job>();
+    // Out of budget: stop posting, still collect what is already paid for, then report it.
+    let overBudget: BudgetExceededError | undefined;
     const chunk = Math.min(opts.chunk ?? 100, 100);
     for (let i = 0; i < todo.length; i += chunk) {
       if (this.spent >= this.opts.budgetUsd) {
-        throw new BudgetExceededError(
+        overBudget = new BudgetExceededError(
           `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); ${todo.length - i} SERPs not posted`,
         );
+        break;
       }
       const part = todo.slice(i, i + chunk);
       const res = await this.request(
@@ -269,26 +340,48 @@ export class DataforseoClient {
         }
         job.cost = task.cost ?? 0;
         this.spent += job.cost;
+        this.tasks.set(job.hash, {
+          taskId: task.id,
+          endpoint,
+          payload: job.payload,
+          postedAt: new Date().toISOString(),
+          costUsd: job.cost,
+        });
         pending.set(task.id, job);
       }
     }
 
     const collect = async (id: string, job: Job): Promise<void> => {
-      const got = await this.request(
-        "GET",
-        `serp/google/organic/task_get/advanced/${id}`,
-        undefined,
-        rec,
-        job.hash,
-        { allowPending: true },
-      );
+      let got: DfsResponse;
+      try {
+        got = await this.request(
+          "GET",
+          `serp/google/organic/task_get/advanced/${id}`,
+          undefined,
+          rec,
+          job.hash,
+          { allowPending: true },
+        );
+      } catch (err) {
+        const message = (err as Error).message;
+        if (err instanceof DataforseoError && !err.retryable) {
+          // The task failed for good or no longer exists: a later run posts it fresh.
+          pending.delete(id);
+          this.tasks.delete(job.hash);
+          failed.push({ keyword: job.keyword, error: message });
+          return;
+        }
+        job.errors++;
+        rec.log.warn("SERP task_get failed", { keyword: job.keyword, tries: job.errors, message });
+        if (job.errors >= COLLECT_MAX_ERRORS) {
+          pending.delete(id);
+          failed.push({ keyword: job.keyword, error: `${message}; ${KEPT}` });
+        }
+        return;
+      }
       const task = got.tasks?.[0];
       if (!task || TASK_PENDING.has(task.status_code)) return; // not ready yet
       pending.delete(id);
-      if (task.status_code !== 20000) {
-        failed.push({ keyword: job.keyword, error: `${task.status_code} ${task.status_message}` });
-        return;
-      }
       const result = task.result?.[0] ?? null;
       this.cache.set(job.hash, {
         endpoint,
@@ -297,6 +390,7 @@ export class DataforseoClient {
         costUsd: job.cost,
         result,
       });
+      this.tasks.delete(job.hash);
       serps.set(job.keyword, parseSerp(job.keyword, result));
     };
     const collectAll = async (ids: string[]) => {
@@ -313,18 +407,26 @@ export class DataforseoClient {
     const interval = this.opts.pollIntervalMs ?? 5_000;
     const deadline = Date.now() + (this.opts.pollTimeoutMs ?? 30 * 60_000);
     while (pending.size) {
-      const ready = await this.request(
-        "GET",
-        "serp/google/organic/tasks_ready",
-        undefined,
-        rec,
-        "tasks_ready",
-        { batch: true },
-      );
-      const listed = (ready.tasks ?? [])
-        .flatMap((t) => (Array.isArray(t.result) ? (t.result as { id?: string }[]) : []))
-        .map((r) => r.id)
-        .filter((id): id is string => !!id && pending.has(id));
+      let listed: string[] = [];
+      try {
+        const ready = await this.request(
+          "GET",
+          "serp/google/organic/tasks_ready",
+          undefined,
+          rec,
+          "tasks_ready",
+          { batch: true },
+        );
+        listed = (ready.tasks ?? [])
+          .flatMap((t) => (Array.isArray(t.result) ? (t.result as { id?: string }[]) : []))
+          .map((r) => r.id)
+          .filter((id): id is string => !!id && pending.has(id));
+      } catch (err) {
+        // The ready list is a shortcut; the direct checks below still find finished tasks.
+        rec.log.warn("tasks_ready failed, checking tasks directly", {
+          message: (err as Error).message,
+        });
+      }
       if (listed.length) {
         await collectAll(listed);
         continue;
@@ -334,7 +436,7 @@ export class DataforseoClient {
       if (!pending.size) break;
       if (Date.now() > deadline) {
         for (const job of pending.values()) {
-          failed.push({ keyword: job.keyword, error: "task not ready before timeout" });
+          failed.push({ keyword: job.keyword, error: `task not ready before timeout; ${KEPT}` });
         }
         rec.log.warn("SERP tasks not ready before timeout", { count: pending.size });
         pending.clear();
@@ -346,6 +448,7 @@ export class DataforseoClient {
     if (failed.length) {
       rec.log.warn("SERPs failed", { count: failed.length, failed: failed.slice(0, 10) });
     }
+    if (overBudget) throw overBudget;
     return { serps, blocked, failed };
   }
 
@@ -358,7 +461,7 @@ export class DataforseoClient {
       if (task && task.status_code === 20000) return task.result?.[0] ?? null;
       if (Date.now() > deadline) {
         throw new DataforseoError(
-          `task not ready before timeout`,
+          `task not ready before timeout; ${KEPT}`,
           endpoint,
           task?.status_code ?? 0,
           true,
@@ -387,25 +490,9 @@ export class DataforseoClient {
     fetcher: (hash: string) => Promise<{ result: unknown; costUsd: number }>,
   ): Promise<unknown> {
     const hash = requestHash(endpoint, payload);
-    const hit = this.cache.get(hash);
-    if (hit) {
-      rec.recordApiCall({
-        service: SERVICE,
-        endpoint,
-        requestHash: hash,
-        cache: "hit",
-        costUsd: 0,
-        latencyMs: 0,
-        status: 200,
-        startedAt: new Date().toISOString(),
-      });
-      return hit.result;
-    }
-    if (this.spent >= this.opts.budgetUsd) {
-      throw new BudgetExceededError(
-        `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); not calling ${endpoint}`,
-      );
-    }
+    const hit = this.hit(endpoint, hash, rec);
+    if (hit) return hit.result;
+    this.assertBudget(endpoint);
     const { result, costUsd } = await fetcher(hash);
     this.cache.set(hash, {
       endpoint,
@@ -415,6 +502,30 @@ export class DataforseoClient {
       result,
     });
     return result;
+  }
+
+  private hit(endpoint: string, hash: string, rec: CallRecorder): CacheEntry | null {
+    const hit = this.cache.get(hash);
+    if (!hit) return null;
+    rec.recordApiCall({
+      service: SERVICE,
+      endpoint,
+      requestHash: hash,
+      cache: "hit",
+      costUsd: 0,
+      latencyMs: 0,
+      status: 200,
+      startedAt: new Date().toISOString(),
+    });
+    return hit;
+  }
+
+  private assertBudget(endpoint: string): void {
+    if (this.spent >= this.opts.budgetUsd) {
+      throw new BudgetExceededError(
+        `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); not calling ${endpoint}`,
+      );
+    }
   }
 
   /** One HTTP call with retries on network errors, 429, 5xx and DataforSEO 5xxxx codes. Each attempt is logged. */

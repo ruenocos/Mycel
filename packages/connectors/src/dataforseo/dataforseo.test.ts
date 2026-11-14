@@ -1,10 +1,15 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ApiCallInput, CallRecorder } from "../recorder.ts";
 import { requestHash, stableStringify } from "./cache.ts";
-import { BudgetExceededError, DataforseoClient, LiveCallBlockedError } from "./client.ts";
+import {
+  BudgetExceededError,
+  DataforseoClient,
+  DataforseoError,
+  LiveCallBlockedError,
+} from "./client.ts";
 import { parseCompetitorDomains, parseSerp } from "./parse.ts";
 import { hostOfKey, isGoogleRedirect, keyFromBreadcrumb, normalizeUrl, resultKey } from "./url.ts";
 
@@ -86,6 +91,9 @@ let cacheDir: string;
 beforeEach(() => {
   cacheDir = mkdtempSync(join(tmpdir(), "mycel-dfs-"));
 });
+
+const pendingFiles = () =>
+  existsSync(join(cacheDir, "pending")) ? readdirSync(join(cacheDir, "pending")) : [];
 
 const client = (
   fetchImpl: typeof fetch,
@@ -388,6 +396,176 @@ describe("DataforseoClient", () => {
     await expect(
       c.serpOrganicBatch(["a", "b", "c"], market, recorder().rec, { chunk: 1 }),
     ).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
+  it("collects what was posted before stopping at the budget", async () => {
+    const c = client(
+      async (url, init) => {
+        const u = String(url);
+        if (u.endsWith("/task_post")) {
+          const body = JSON.parse(String(init?.body)) as { tag: string }[];
+          return new Response(
+            JSON.stringify({
+              status_code: 20000,
+              status_message: "Ok.",
+              tasks: body.map((b) => ({
+                id: "paid",
+                status_code: 20100,
+                status_message: "Created",
+                cost: 0.5,
+                data: { tag: b.tag },
+              })),
+            }),
+          );
+        }
+        if (u.endsWith("/tasks_ready")) return ok({ id: "paid" }, 0);
+        return ok(serpFixture, 0);
+      },
+      { allowLiveSerp: true, budgetUsd: 0.4 },
+    );
+    const { rec } = recorder();
+    await expect(c.serpOrganicBatch(["a", "b"], market, rec, { chunk: 1 })).rejects.toBeInstanceOf(
+      BudgetExceededError,
+    );
+    // "a" was paid for, so it is in the cache; nothing is left waiting.
+    const off = client(async () => {
+      throw new Error("no network expected");
+    });
+    const again = await off.serpOrganicBatch(["a", "b"], market, rec);
+    expect([...again.serps.keys()]).toEqual(["a"]);
+    expect(again.blocked).toEqual(["b"]);
+    expect(pendingFiles()).toEqual([]);
+  });
+
+  it("never pays twice for a SERP that timed out: the next run collects the same task", async () => {
+    const { rec } = recorder();
+    const inQueue = () =>
+      new Response(
+        JSON.stringify({
+          status_code: 20000,
+          status_message: "Ok.",
+          tasks: [{ status_code: 40602, status_message: "Task In Queue." }],
+        }),
+      );
+    let posts = 0;
+    const slow = client(
+      async (url) => {
+        if (String(url).endsWith("/task_post")) {
+          posts++;
+          return ok(null, 0.0006, { id: "slow1" });
+        }
+        return inQueue();
+      },
+      { allowLiveSerp: true, pollTimeoutMs: -1 },
+    );
+    await expect(slow.serpOrganic("kamerplant", market, rec)).rejects.toThrow(/next run collects/);
+    expect(pendingFiles()).toHaveLength(1);
+
+    // Next run: no task_post, the saved task id is collected. Works with paid SERPs off too.
+    const urls: string[] = [];
+    const next = client(async (url) => {
+      urls.push(String(url));
+      return ok(serpFixture, 0);
+    });
+    const serp = await next.serpOrganic("kamerplant", market, rec);
+    expect(serp.organic).toHaveLength(2);
+    expect(urls).toEqual([expect.stringMatching(/task_get\/advanced\/slow1$/)]);
+    expect(posts).toBe(1);
+    expect(next.spentUsd).toBe(0);
+    expect(pendingFiles()).toEqual([]);
+  });
+
+  it("keeps batch task ids across a timeout and a failing task doesn't sink the batch", async () => {
+    const { rec } = recorder();
+    const post = (body: { keyword: string; tag: string }[]) =>
+      new Response(
+        JSON.stringify({
+          status_code: 20000,
+          status_message: "Ok.",
+          tasks: body.map((b) => ({
+            id: `task-${b.keyword}`,
+            status_code: 20100,
+            status_message: "Task Created.",
+            cost: 0.0006,
+            data: { tag: b.tag },
+          })),
+        }),
+      );
+    const none = () => ok(null, 0, { result: [] });
+    let posts = 0;
+    const first = client(
+      async (url, init) => {
+        const u = String(url);
+        if (u.endsWith("/task_post")) {
+          posts++;
+          return post(JSON.parse(String(init?.body)));
+        }
+        if (u.endsWith("/tasks_ready")) return none();
+        if (u.endsWith("task-monstera")) return ok(serpFixture, 0);
+        if (u.endsWith("task-weg")) {
+          return new Response(
+            JSON.stringify({
+              status_code: 20000,
+              status_message: "Ok.",
+              tasks: [{ status_code: 40401, status_message: "Task Not Found." }],
+            }),
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            status_code: 20000,
+            status_message: "Ok.",
+            tasks: [{ status_code: 40602, status_message: "Task In Queue." }],
+          }),
+        );
+      },
+      { allowLiveSerp: true, pollTimeoutMs: -1 },
+    );
+    const res = await first.serpOrganicBatch(["monstera", "weg", "pothos"], market, rec);
+    expect([...res.serps.keys()]).toEqual(["monstera"]);
+    expect(res.failed).toEqual([
+      { keyword: "weg", error: "40401 Task Not Found." },
+      { keyword: "pothos", error: expect.stringMatching(/timeout; the task id is saved/) },
+    ]);
+    // Only the task that can still finish stays on disk.
+    expect(pendingFiles()).toHaveLength(1);
+
+    const urls: string[] = [];
+    const second = client(async (url) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.endsWith("/tasks_ready")) throw new TypeError("fetch failed");
+      return ok(serpFixture, 0);
+    });
+    const again = await second.serpOrganicBatch(["monstera", "pothos"], market, rec);
+    expect([...again.serps.keys()].sort()).toEqual(["monstera", "pothos"]);
+    expect(again.failed).toEqual([]);
+    expect(urls.some((u) => u.endsWith("/task_post"))).toBe(false);
+    expect(urls.at(-1)).toMatch(/task_get\/advanced\/task-pothos$/);
+    expect(posts).toBe(1);
+    expect(second.spentUsd).toBe(0);
+    expect(pendingFiles()).toEqual([]);
+  });
+
+  it("posts a saved task again when DataforSEO no longer has it", async () => {
+    const { rec } = recorder();
+    const gone = client(
+      async (url) =>
+        String(url).endsWith("/task_post")
+          ? ok(null, 0.0006, { id: "old" })
+          : new Response(
+              JSON.stringify({
+                status_code: 20000,
+                status_message: "Ok.",
+                tasks: [{ status_code: 40401, status_message: "Task Not Found." }],
+              }),
+            ),
+      { allowLiveSerp: true },
+    );
+    await expect(gone.serpOrganic("kamerplant", market, rec)).rejects.toBeInstanceOf(
+      DataforseoError,
+    );
+    expect(pendingFiles()).toEqual([]);
   });
 
   it("retries 5xx and logs every attempt", async () => {
