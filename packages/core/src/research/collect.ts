@@ -309,20 +309,47 @@ export function researchStep(port: ResearchPort) {
       for (const s of seeds) bag.add(s.text, "seed");
 
       // Labs keyword ideas around every seed. Sequential, so the budget check is exact.
-      let related = 0;
-      let suggested = 0;
-      for (const s of seeds) {
-        for (const k of await port.relatedKeywords(s.text, market, ctx)) {
-          bag.add(k.keyword, "dfs_related", { idea: k });
-          related++;
+      // One seed the API keeps refusing (e.g. a steady HTTP 500) shouldn't throw away the run;
+      // the budget still stops it, and a source that fails for every seed stops it too.
+      const ideas = async (
+        source: "dfs_related" | "dfs_suggestions",
+        call: (seed: string) => Promise<KeywordIdeaLike[]>,
+      ) => {
+        let items = 0;
+        const failed: string[] = [];
+        let last: unknown;
+        for (const s of seeds) {
+          let got: KeywordIdeaLike[];
+          try {
+            got = await call(s.text);
+          } catch (err) {
+            if ((err as Error)?.name === "BudgetExceededError") throw err;
+            ctx.log.warn(`${source} failed for a seed, skipping it`, {
+              seed: s.text,
+              error: (err as Error)?.message ?? String(err),
+            });
+            failed.push(s.text);
+            last = err;
+            continue;
+          }
+          for (const k of got) {
+            bag.add(k.keyword, source, { idea: k });
+            items++;
+          }
         }
-        for (const k of await port.keywordSuggestions(s.text, market, ctx)) {
-          bag.add(k.keyword, "dfs_suggestions", { idea: k });
-          suggested++;
+        if (seeds.length > 0 && failed.length === seeds.length) throw last;
+        if (failed.length > 0) {
+          warnings.push(`${source} failed for ${failed.length} seed(s): ${failed.join(", ")}.`);
         }
-      }
-      report("dfs_related", seeds.length, related);
-      report("dfs_suggestions", seeds.length, suggested);
+        report(
+          source,
+          seeds.length,
+          items,
+          failed.length > 0 ? `failed for ${failed.join(", ")}` : undefined,
+        );
+      };
+      await ideas("dfs_related", (seed) => port.relatedKeywords(seed, market, ctx));
+      await ideas("dfs_suggestions", (seed) => port.keywordSuggestions(seed, market, ctx));
 
       // The client's own ranked keywords.
       if (options.ranked && !reserved) {

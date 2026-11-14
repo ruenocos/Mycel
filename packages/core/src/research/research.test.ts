@@ -406,6 +406,33 @@ describe("researchStep", () => {
     ).rejects.toThrow("budget reached");
   });
 
+  it("skips a seed the keyword API keeps refusing, but not every seed and not the budget", async () => {
+    const port = stubPort({});
+    const suggest = port.keywordSuggestions;
+    port.keywordSuggestions = async (seed, m, rec) => {
+      if (seed === "erp") throw new Error("HTTP 500");
+      return suggest(seed, m, rec);
+    };
+    const opts = { context: consultancy, seeds, options: { serps: false } };
+    const d = await runStep(newRun(), researchStep(port), opts);
+    expect(d.queries.find((x) => x.normalized === "beste erp kiezen")).toBeDefined();
+    expect(d.queries.find((x) => x.normalized === "beste erp")).toBeUndefined();
+    expect(d.warnings.join(" ")).toContain("dfs_suggestions failed for 1 seed(s): erp");
+    expect(d.coverage.find((c) => c.source === "dfs_suggestions")?.note).toContain("erp");
+
+    port.keywordSuggestions = async () => {
+      throw new Error("HTTP 500");
+    };
+    await expect(runStep(newRun(), researchStep(port), opts)).rejects.toThrow("HTTP 500");
+
+    port.relatedKeywords = async () => {
+      const err = new Error("budget reached");
+      err.name = "BudgetExceededError";
+      throw err;
+    };
+    await expect(runStep(newRun(), researchStep(port), opts)).rejects.toThrow("budget reached");
+  });
+
   it("stops the run on a real data error instead of passing on a partial dataset", async () => {
     const port = stubPort({});
     port.serpOrganic = async () => {
