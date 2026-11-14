@@ -222,7 +222,7 @@ describe("relevance tiers and merges", () => {
     expect(bridge?.qdpWhy).toContain("15000 searches a month");
   });
 
-  it("merges aliases that the filter gave the same topic, if they share a result", () => {
+  it("merges aliases that the filter gave the same topic", () => {
     const t = (text: string, topic: string, volume: number) => ({ ...q(text, { volume }), topic });
     const r = run(
       [
@@ -237,9 +237,25 @@ describe("relevance tiers and merges", () => {
       ],
     );
     const nav = r.clusters.find((c) => c.hub === "microsoft nav");
-    expect(nav?.members.map((m) => m.query)).toEqual(["microsoft nav", "navision"]);
+    expect(nav?.members.map((m) => m.query).slice(0, 2)).toEqual(["microsoft nav", "navision"]);
     expect(nav?.members[1]?.joined).toContain("same topic");
-    expect(r.clusters.find((c) => c.hub === "nav kassa")).toBeDefined(); // no shared result
+    // Same tier: aliases merge even without a shared result.
+    expect(nav?.members.map((m) => m.query)).toContain("nav kassa");
+  });
+
+  it("never names a cluster after a bridge query", () => {
+    const r = run(
+      [
+        q("kamerplant kopen", { volume: 500, label: "core", relevance: 1 }),
+        q("planten", { volume: 15000, label: "bridge", relevance: 0.25 }),
+      ],
+      [
+        serp("kamerplant kopen", ["1", "2", "3", "4", "5", "6"]),
+        serp("planten", ["1", "2", "3", "4", "20", "21"]),
+      ],
+    );
+    expect(r.clusters[0]?.mainQuery).toBe("kamerplant kopen");
+    expect(r.clusters[0]?.members).toHaveLength(2);
   });
 
   it("keeps chain merges inside one tier", () => {
