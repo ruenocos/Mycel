@@ -142,6 +142,22 @@ describe("clusterQueries", () => {
     expect(by("niks")?.hostClusterId).toBeUndefined();
   });
 
+  it("names the demand behind a section, including Search Console impressions", () => {
+    const gsc = (text: string, impressions: number): FilteredQuery => ({
+      ...q(text),
+      metrics: { gscImpressions: impressions },
+    });
+    const r = run(
+      [q("kamerplant verpotten", { volume: 500 }), gsc("kamerplant verpotten winter", 40)],
+      [
+        serp("kamerplant verpotten", ["1", "2", "3", "4", "5", "6"]),
+        serp("kamerplant verpotten winter", ["1", "2", "30", "31", "32", "33"]),
+      ],
+    );
+    expect(r.clusters[1]?.qdpWhy).toContain("(40 impressions in Search Console)");
+    expect(r.clusters[1]?.qdpWhy).not.toContain("0/month");
+  });
+
   it("notes AI Overviews and whether the client is cited, and blends SERP features into prominence", () => {
     const r = run(
       [q("kamerplant kopen", { volume: 1000, relevance: 1 })],

@@ -316,11 +316,16 @@ export function clusterQueries(input: ClusterInput): {
       }
     }
     const hasDemand = c.demand.volume > 0 || c.demand.gscImpressions > 0;
+    const demandText = [
+      c.demand.volume > 0 ? `${c.demand.volume} searches a month` : "",
+      c.demand.gscImpressions > 0 ? `${c.demand.gscImpressions} impressions in Search Console` : "",
+    ]
+      .filter(Boolean)
+      .join(" and ");
     if (!host || bestScore < 0.25) {
       if (hasDemand) {
         c.qdp = "page";
-        c.qdpWhy =
-          "Own page by default: some demand, and no existing page is close enough to host it.";
+        c.qdpWhy = `Own page by default: ${demandText}, and no existing page is close enough to host it.`;
         c.outlier = true;
         c.outlierReasons.push("small page with no close host: check if it belongs elsewhere");
         pages.push(c);
@@ -339,7 +344,7 @@ export function clusterQueries(input: ClusterInput): {
         ? `shares ${bestOverlap} result${bestOverlap === 1 ? "" : "s"} with "${host.mainQuery}"`
         : `closest in wording to "${host.mainQuery}"`;
     c.qdpWhy = hasDemand
-      ? `Section on "${host.mainQuery}": too little demand for its own page (${c.demand.volume}/month), ${near}.`
+      ? `Section on "${host.mainQuery}": too little demand for its own page (${demandText}), ${near}.`
       : `Micro context on "${host.mainQuery}": no measured demand, answer it in passing (FAQ), ${near}.`;
   }
   return {
