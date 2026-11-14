@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Market } from "./context.ts";
+import { RelevanceLabel } from "./filter.ts";
 
 /** Output of step 10: queries grouped by SERP overlap (ADR 0003). */
 export const Cluster = z.object({
@@ -31,6 +32,8 @@ export const ClusterMember = z.object({
   shared: z.number().int().nonnegative(),
   volume: z.number().int().nonnegative().optional(),
   gscImpressions: z.number().int().nonnegative().optional(),
+  /** How it joined when not by sharing results with the hub: a spelling variant or a chained merge. */
+  joined: z.string().optional(),
   scores: z.object({
     relevance: z.number().min(0).max(1),
     prominence: z.number().min(0).max(1),
@@ -43,7 +46,8 @@ export type ClusterMember = z.infer<typeof ClusterMember>;
 export const ClusterDetail = Cluster.extend({
   /** The highest-priority query; every member was compared against its SERP. */
   hub: z.string().min(1),
-  label: z.enum(["core", "related"]),
+  /** The closest tier among its members (never "off"). */
+  label: RelevanceLabel.refine((l) => l !== "off", "a cluster can't be off topic"),
   entity: z.string().optional(),
   members: z.array(ClusterMember).min(1),
   demand: z.object({
@@ -78,6 +82,10 @@ export const ClusterSet = z
       outliers: z.number().int().nonnegative(),
       ambiguousMembers: z.number().int().nonnegative(),
       borderlineMembers: z.number().int().nonnegative(),
+      /** Sections that are bridge topics (broader than the central entity). */
+      bridges: z.number().int().nonnegative().default(0),
+      /** Clusters folded into another one (spelling variants, same intent). */
+      merged: z.number().int().nonnegative().default(0),
     }),
   })
   .superRefine((set, ctx) => {

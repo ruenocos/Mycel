@@ -19,12 +19,19 @@ import { defineStep } from "../step.ts";
  * most with (at least `minShared` URLs), or becomes a new hub. Comparing with the hub, not with
  * any member, stops chains (A~B, B~C, but A and C have nothing in common).
  *
- * Then Query Deserves a Page (doc 11): a cluster with enough demand is a page; a smaller one
- * becomes a section on the page it is closest to, and one without demand is micro context
- * (answered in passing, e.g. an FAQ) on that page. Doubtful clusters are flagged for a person.
+ * Then two merge passes (doc 11 near-duplicates, doc 24 "merge small groups with one intent"):
+ * spelling variants of the same words fold into one cluster, and a small cluster whose hub
+ * shares enough results with a member of an earlier cluster joins it.
+ *
+ * Then Query Deserves a Page (doc 11): a core or outer cluster with enough demand is a page; a
+ * smaller one becomes a section on the page it is closest to, and one without demand is micro
+ * context (answered in passing, e.g. an FAQ) on that page. A bridge cluster (broader than the
+ * central entity) never gets a page of its own: it is mentioned on the closest page. Doubtful
+ * clusters are flagged for a person.
  */
 
-export const CLUSTER_VERSION = "1";
+/** 2: relevance tiers (bridge never a page), variant and same-intent merges. */
+export const CLUSTER_VERSION = "2";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -98,6 +105,44 @@ export const ClusterOptions = z.object({
 });
 export type ClusterOptions = z.infer<typeof ClusterOptions>;
 
+const STOPWORDS: Record<string, Set<string>> = {
+  nl: new Set(["de", "het", "een", "en", "van", "voor", "in", "op", "met", "te", "s", "je", "jij"]),
+  en: new Set(["the", "a", "an", "and", "of", "for", "in", "on", "with", "to", "s"]),
+};
+
+/**
+ * A light stemmer per market language, only for spotting spelling variants (never shown).
+ * Dutch: plural -en/-s, inflected -e, doubled consonants and long vowels ("grote kamerplanten"
+ * and "groot kamerplant" both become "grot kamerplant"). Other languages: plural -s only.
+ */
+export function stemToken(tok: string, language: string): string {
+  let t = tok;
+  if (language === "nl") {
+    if (t.length > 4 && t.endsWith("en")) t = t.slice(0, -2);
+    else if (t.length > 3 && t.endsWith("s") && !t.endsWith("ss")) t = t.slice(0, -1);
+    else if (t.length > 3 && t.endsWith("e") && !t.endsWith("ee")) t = t.slice(0, -1);
+    t = t.replace(/([bdfgklmnprst])\1$/, "$1").replace(/(aa|ee|oo|uu)/g, (m) => m.charAt(0));
+    return t;
+  }
+  if (t.length > 3 && t.endsWith("s") && !t.endsWith("ss")) t = t.slice(0, -1);
+  return t;
+}
+
+/** Same key = the same words up to plural, inflection, spelling and word order. */
+export function variantKey(text: string, language: string): string {
+  const stop = STOPWORDS[language] ?? new Set<string>();
+  const stems = canonical(text)
+    .split(" ")
+    .filter((t) => t && !stop.has(t))
+    .map((t) => stemToken(t, language));
+  return [...new Set(stems)].sort().join(" ");
+}
+
+const TIERS = ["core", "outer", "bridge"] as const;
+type Tier = (typeof TIERS)[number];
+const tierOf = (q: FilteredQuery): Tier =>
+  q.label === "core" || q.label === "bridge" ? q.label : "outer";
+
 /** Priority for hub order: relevance first, then demand. */
 function priority(q: FilteredQuery): number {
   const s = q.scores;
@@ -145,12 +190,14 @@ export interface ClusterInput {
   serps: Map<string, ClusterSerp>;
   siteHost: string;
   options: ClusterOptions;
+  /** Market language, for spotting spelling variants. Default "nl". */
+  language?: string;
 }
 
 /** The pure clustering + QDP logic; the step around it fetches the SERPs. */
 export function clusterQueries(input: ClusterInput): {
   clusters: ClusterDetail[];
-  stats: { ambiguousMembers: number; borderlineMembers: number };
+  stats: { ambiguousMembers: number; borderlineMembers: number; merged: number };
 } {
   const { options: o } = input;
   const ordered = [...input.queries].sort(
@@ -162,7 +209,7 @@ export function clusterQueries(input: ClusterInput): {
   type Draft = {
     hub: FilteredQuery;
     hubKeys: Set<string>;
-    members: { q: FilteredQuery; shared: number; keys: Set<string> }[];
+    members: { q: FilteredQuery; shared: number; keys: Set<string>; joined?: string }[];
     reasons: string[];
   };
   const drafts: Draft[] = [];
@@ -200,9 +247,61 @@ export function clusterQueries(input: ClusterInput): {
     }
   }
 
+  // Merge pass 1: spelling variants (same words up to plural, inflection, order) are one topic.
+  // Merge pass 2: a small cluster whose hub shares minShared results with a member of an earlier
+  // cluster, and at least one with its hub, has the same intent (doc 24). One hop only.
+  const language = input.language ?? "nl";
+  const textWeights = termWeights(ordered.map((q) => q.text));
+  let merged = 0;
+  const fold = (into: Draft, from: Draft, why: string) => {
+    for (const m of from.members) {
+      into.members.push({ ...m, shared: intersect(m.keys, into.hubKeys), joined: why });
+    }
+    into.reasons.push(...from.reasons);
+    merged++;
+  };
+  const byKey = new Map<string, Draft>();
+  const afterVariants: Draft[] = [];
+  for (const d of drafts) {
+    const key = variantKey(d.hub.text, language);
+    const first = key ? byKey.get(key) : undefined;
+    if (first) fold(first, d, `spelling variant of "${first.hub.text}"`);
+    else {
+      if (key) byKey.set(key, d);
+      afterVariants.push(d);
+    }
+  }
+  const kept: Draft[] = [];
+  for (const d of afterVariants) {
+    let target: Draft | undefined;
+    let why = "";
+    if (d.members.length <= 2) {
+      for (const k of kept) {
+        const viaHub = intersect(d.hubKeys, k.hubKeys);
+        if (viaHub === 0) continue;
+        const viaMember = Math.max(...k.members.map((m) => intersect(d.hubKeys, m.keys)));
+        if (viaMember >= o.minShared) {
+          target = k;
+          why = `shares ${viaMember} results with a query on "${k.hub.text}"`;
+          break;
+        }
+        if (
+          viaHub === o.minShared - 1 &&
+          termSimilarity(d.hub.text, k.hub.text, textWeights) >= 0.5
+        ) {
+          target = k;
+          why = `near-identical wording and ${viaHub} shared results with "${k.hub.text}"`;
+          break;
+        }
+      }
+    }
+    if (target) fold(target, d, why);
+    else kept.push(d);
+  }
+
   // Build clusters, then decide QDP.
   const ids = new Set<string>();
-  const clusters: (ClusterDetail & { _hubKeys: Set<string> })[] = drafts.map((d) => {
+  const clusters: (ClusterDetail & { _hubKeys: Set<string> })[] = kept.map((d) => {
     const qs = d.members.map((m) => m.q);
     const main = [...qs].sort(
       (a, b) =>
@@ -235,6 +334,7 @@ export function clusterQueries(input: ClusterInput): {
       return {
         query: m.q.text,
         shared: m.shared,
+        ...(m.joined ? { joined: m.joined } : {}),
         ...(m.q.metrics.volume !== undefined ? { volume: m.q.metrics.volume } : {}),
         ...(m.q.metrics.gscImpressions !== undefined
           ? { gscImpressions: m.q.metrics.gscImpressions }
@@ -255,7 +355,7 @@ export function clusterQueries(input: ClusterInput): {
       sharedUrls,
       qdp: "page" as const,
       outlier: d.reasons.length > 0,
-      label: qs.some((q) => q.label === "core") ? ("core" as const) : ("related" as const),
+      label: TIERS.find((t) => qs.some((q) => tierOf(q) === t)) ?? ("outer" as const),
       ...(entity ? { entity } : {}),
       members,
       demand: {
@@ -279,6 +379,7 @@ export function clusterQueries(input: ClusterInput): {
   // QDP: which clusters deserve a page.
   const isPage = (c: (typeof clusters)[number]) => {
     const why: string[] = [];
+    if (c.label === "bridge") return why; // broader than the central entity: never its own page
     if (c.demand.volume >= o.minPageVolume) why.push(`${c.demand.volume} searches a month`);
     if (
       c.label === "core" &&
@@ -316,6 +417,7 @@ export function clusterQueries(input: ClusterInput): {
       }
     }
     const hasDemand = c.demand.volume > 0 || c.demand.gscImpressions > 0;
+    const bridge = c.label === "bridge";
     const demandText = [
       c.demand.volume > 0 ? `${c.demand.volume} searches a month` : "",
       c.demand.gscImpressions > 0 ? `${c.demand.gscImpressions} impressions in Search Console` : "",
@@ -323,7 +425,14 @@ export function clusterQueries(input: ClusterInput): {
       .filter(Boolean)
       .join(" and ");
     if (!host || bestScore < 0.25) {
-      if (hasDemand) {
+      if (bridge) {
+        c.qdp = "micro";
+        c.qdpWhy = hasDemand
+          ? `Bridge topic (${demandText}): broader than the central entity, and no page is close enough to mention it on.`
+          : "Bridge topic with no search volume and no page close enough to mention it on.";
+        c.outlier = true;
+        c.outlierReasons.push("bridge topic with no close page: check if it belongs in the map");
+      } else if (hasDemand) {
         c.qdp = "page";
         c.qdpWhy = `Own page by default: ${demandText}, and no existing page is close enough to host it.`;
         c.outlier = true;
@@ -339,6 +448,16 @@ export function clusterQueries(input: ClusterInput): {
     }
     c.qdp = hasDemand ? "section" : "micro";
     c.hostClusterId = host.id;
+    if (bridge) {
+      const near2 =
+        bestOverlap > 0
+          ? `shares ${bestOverlap} result${bestOverlap === 1 ? "" : "s"} with it`
+          : "closest in wording";
+      c.qdpWhy = hasDemand
+        ? `Bridge topic on "${host.mainQuery}": broader than the central entity (${demandText}), so mention it there as context instead of a page of its own; ${near2}.`
+        : `Bridge topic on "${host.mainQuery}": broader than the central entity, mention it in passing; ${near2}.`;
+      continue;
+    }
     const near =
       bestOverlap > 0
         ? `shares ${bestOverlap} result${bestOverlap === 1 ? "" : "s"} with "${host.mainQuery}"`
@@ -349,7 +468,7 @@ export function clusterQueries(input: ClusterInput): {
   }
   return {
     clusters: clusters.map(({ _hubKeys, ...c }) => c),
-    stats: { ambiguousMembers: ambiguous, borderlineMembers: borderline },
+    stats: { ambiguousMembers: ambiguous, borderlineMembers: borderline, merged },
   };
 }
 
@@ -392,6 +511,7 @@ export function clusterStep(port: SerpBatchPort) {
         serps,
         siteHost: host,
         options: input.options,
+        language: input.context.market.language,
       });
       const count = (k: ClusterDetail["qdp"]) => clusters.filter((c) => c.qdp === k).length;
       const out = {
@@ -409,6 +529,7 @@ export function clusterStep(port: SerpBatchPort) {
           micro: count("micro"),
           singletons: clusters.filter((c) => c.members.length === 1).length,
           outliers: clusters.filter((c) => c.outlier).length,
+          bridges: clusters.filter((c) => c.label === "bridge" && c.qdp !== "page").length,
           ...stats,
         },
       };

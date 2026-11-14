@@ -12,8 +12,10 @@ import {
   clusterStep,
   overlapKeys,
   type SerpBatchPort,
+  stemToken,
   termSimilarity,
   termWeights,
+  variantKey,
 } from "./cluster.ts";
 
 const ctx = ClientContext.parse({
@@ -26,13 +28,13 @@ const ctx = ClientContext.parse({
 
 const q = (
   text: string,
-  over: { volume?: number; label?: "core" | "related"; relevance?: number } = {},
+  over: { volume?: number; label?: "core" | "outer" | "bridge"; relevance?: number } = {},
 ): FilteredQuery => ({
   text,
   normalized: normalizeQuery(text),
   sources: ["dfs_related"],
   metrics: over.volume !== undefined ? { volume: over.volume } : {},
-  label: over.label ?? "related",
+  label: over.label ?? "outer",
   entity: "kamerplant",
   filter: { kept: true },
   scores: { relevance: over.relevance ?? 0.6, prominence: 0.5, popularity: 0.5 },
@@ -82,16 +84,19 @@ describe("clusterQueries", () => {
       [
         serp("grote kamerplant kopen", ["1", "2", "3", "4", "5", "6"]),
         serp("grote kamerplanten", ["1", "2", "3", "7", "8", "9"]),
-        serp("kamerplant xl", ["1", "2", "8", "9", "10", "11"]), // only 2 shared with the hub: no chain
+        serp("kamerplant xl", ["1", "2", "8", "9", "10", "11"]), // 2 with the hub, 4 with a member
         serp("monstera verzorgen", ["20", "21", "22", "23", "24", "25"]),
       ],
     );
     const by = (main: string) => r.clusters.find((c) => c.members.some((m) => m.query === main));
     expect(by("grote kamerplanten")?.hub).toBe("grote kamerplant kopen");
     expect(by("grote kamerplanten")?.mainQuery).toBe("grote kamerplant kopen");
-    expect(by("kamerplant xl")?.hub).toBe("kamerplant xl");
+    // Same intent (doc 24): it shares 4 results with "grote kamerplanten", which is on the page.
+    const xl = by("kamerplant xl")?.members.find((m) => m.query === "kamerplant xl");
+    expect(by("kamerplant xl")?.hub).toBe("grote kamerplant kopen");
+    expect(xl?.joined).toContain('shares 4 results with a query on "grote kamerplant kopen"');
     expect(by("monstera verzorgen")?.qdp).toBe("page");
-    expect(by("grote kamerplanten")?.demand.volume).toBe(1300);
+    expect(by("grote kamerplanten")?.demand.volume).toBe(1390);
     expect(by("grote kamerplanten")?.label).toBe("core");
     expect(r.stats.borderlineMembers).toBe(1);
   });
@@ -180,6 +185,49 @@ describe("clusterQueries", () => {
       "images",
     ]);
     expect(c?.members[0]?.scores.prominence).toBe(0.75); // (0.5 evidence + 1.0 features) / 2
+  });
+});
+
+describe("relevance tiers and merges", () => {
+  it("folds spelling variants into one cluster", () => {
+    const r = run(
+      [q("groot kamerplant", { volume: 900 }), q("grote kamerplanten", { volume: 800 })],
+      [
+        serp("groot kamerplant", ["1", "2", "3", "4", "5", "6"]),
+        serp("grote kamerplanten", ["1", "7", "8", "9", "10", "11"]),
+      ],
+    );
+    expect(r.clusters).toHaveLength(1);
+    expect(r.clusters[0]?.members.map((m) => m.joined)).toEqual([
+      undefined,
+      'spelling variant of "groot kamerplant"',
+    ]);
+    expect(r.stats.merged).toBe(1);
+  });
+
+  it("never gives a bridge topic its own page, however big", () => {
+    const r = run(
+      [
+        q("kamerplant kopen", { volume: 500, label: "core", relevance: 1 }),
+        q("planten", { volume: 15000, label: "bridge", relevance: 0.25 }),
+      ],
+      [
+        serp("kamerplant kopen", ["1", "2", "3", "4", "5", "6"]),
+        serp("planten", ["1", "20", "21", "22", "23", "24"]),
+      ],
+    );
+    const bridge = r.clusters.find((c) => c.mainQuery === "planten");
+    expect(bridge).toMatchObject({ label: "bridge", qdp: "section" });
+    expect(bridge?.qdpWhy).toContain('Bridge topic on "kamerplant kopen"');
+    expect(bridge?.qdpWhy).toContain("15000 searches a month");
+  });
+
+  it("stems Dutch variants but leaves other words alone", () => {
+    expect(variantKey("grote kamerplanten", "nl")).toBe(variantKey("groot kamerplant", "nl"));
+    expect(variantKey("manuele therapie", "nl")).toBe(variantKey("manueel therapie", "nl"));
+    expect(variantKey("kamerplant kopen", "nl")).not.toBe(variantKey("kamerplant verpotten", "nl"));
+    expect(variantKey("dracaena's", "nl")).toBe("dracaena");
+    expect(stemToken("plants", "en")).toBe("plant");
   });
 });
 

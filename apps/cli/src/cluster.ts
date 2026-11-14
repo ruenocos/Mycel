@@ -27,7 +27,8 @@ export function summarizeClusters(d: ClusterSet): string[] {
     `queries     ${s.queries} kept, ${s.clustered} clustered, ${d.unclustered.length} without a SERP`,
     `clusters    ${s.clusters}: ${s.pages} pages, ${s.sections} sections, ${s.micro} micro`,
     `review      ${s.outliers} flagged, ${s.ambiguousMembers} ambiguous, ${s.borderlineMembers} borderline (exactly ${d.minSharedUrls} shared)`,
-    `singletons  ${s.singletons} of ${s.clusters} clusters have one query`,
+    `singletons  ${s.singletons} of ${s.clusters} clusters have one query (${s.merged} merged as variants or same intent)`,
+    `bridges     ${s.bridges} broader topics mentioned on a page instead of their own`,
   ];
   const pages = d.clusters
     .filter((c) => c.qdp === "page")

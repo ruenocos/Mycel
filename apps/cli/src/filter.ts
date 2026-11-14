@@ -29,7 +29,7 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
     const n = user.split("\nQueries:\n")[1]?.split("\n").filter(Boolean).length ?? 0;
     return JSON.stringify({
-      results: Array.from({ length: n }, (_, i) => ({ i, label: "related", why: "fake" })),
+      results: Array.from({ length: n }, (_, i) => ({ i, label: "outer", why: "fake" })),
     });
   });
   const ollama = new OllamaProvider({
