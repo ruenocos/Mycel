@@ -71,7 +71,7 @@ describe("mycel cluster", () => {
     const d = ClusterSet.parse(JSON.parse(readFileSync(join(dir, "clusters.json"), "utf8")));
     expect(d.stats).toMatchObject({ queries: 3, clustered: 2, clusters: 1, pages: 1 });
     expect(d.unclustered.map((u) => u.query)).toEqual(["monstera"]);
-    expect(res.lines.join("\n")).toContain("top pages   kamerplant kopen (2, 1200/mo)");
+    expect(res.lines.join("\n")).toContain("top pages   kamerplant kopen (core, 2, 1200/mo)");
   });
 
   it("refuses an unconfirmed context unless asked for a dry run", async () => {

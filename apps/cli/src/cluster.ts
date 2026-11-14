@@ -21,6 +21,8 @@ const readJson = (path: string) => {
   return JSON.parse(readFileSync(path, "utf8"));
 };
 
+const tierRank = (l: string) => (l === "core" ? 0 : l === "outer" ? 1 : 2);
+
 export function summarizeClusters(d: ClusterSet): string[] {
   const s = d.stats;
   const lines = [
@@ -32,9 +34,10 @@ export function summarizeClusters(d: ClusterSet): string[] {
   ];
   const pages = d.clusters
     .filter((c) => c.qdp === "page")
-    .sort((a, b) => b.demand.volume - a.demand.volume)
+    // Core before outer, then demand (doc 02, step 9: relevance before volume).
+    .sort((a, b) => tierRank(a.label) - tierRank(b.label) || b.demand.volume - a.demand.volume)
     .slice(0, 10)
-    .map((c) => `${c.mainQuery} (${c.members.length}, ${c.demand.volume}/mo)`);
+    .map((c) => `${c.mainQuery} (${c.label}, ${c.members.length}, ${c.demand.volume}/mo)`);
   if (pages.length) lines.push(`top pages   ${pages.join(", ")}`);
   const aio = d.clusters.filter((c) => c.qdp === "page" && c.aiOverview.present);
   const cited = aio.filter((c) => c.aiOverview.cited).length;
