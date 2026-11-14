@@ -85,7 +85,10 @@ describe("mycel map", () => {
     const maps = SiteMaps.parse(JSON.parse(readFileSync(join(dir, "topical-map.json"), "utf8")));
     const nodes = maps.maps[0]?.nodes ?? [];
     expect(nodes[0]).toMatchObject({ id: "root-kamerplant", level: "root", proposedUrl: "/" });
-    expect(nodes.find((n) => n.mainQuery === "grote kamerplant kopen")?.parentId).toBe("n-kopen");
+    // The site's own category page makes "grote kamerplant kopen" a locked hub under home.
+    const grote = nodes.find((n) => n.mainQuery === "grote kamerplant kopen");
+    expect(grote?.hub).toBe("site");
+    expect(grote?.level).toBe("seed");
     expect(nodes.find((n) => n.mainQuery === "kamerplant verpotten")?.existingPage?.url).toBe(
       "/verzorging/kamerplant-verpotten/",
     );

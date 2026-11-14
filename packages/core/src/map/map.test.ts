@@ -24,7 +24,7 @@ import {
   planMaps,
   slugify,
 } from "./build.ts";
-import { checkGate } from "./gate.ts";
+import { checkGate, mapShape, shapeChecks } from "./gate.ts";
 import { type LabelAnswer, mapStep } from "./label.ts";
 import { buildLinkMessages, type LinkAnswer, linkablePages } from "./link.ts";
 
@@ -132,6 +132,7 @@ const queries: FilteredQuery[] = [
 function stub(
   hubs: Record<string, string> = {},
   links: Record<string, string> = { "/kamerplanten/xl-planten/": "grote kamerplant kopen" },
+  also: Record<string, string> = {},
 ): JsonModel & { calls: number; prompts: string[] } {
   const model = {
     calls: 0,
@@ -143,7 +144,7 @@ function stub(
       model.calls++;
       const user = req.messages[1]?.content ?? "";
       model.prompts.push(user);
-      if (user.includes("\nMap pages:\n")) return schema.parse(answerLinks(user, links));
+      if (user.includes("\nMap pages:\n")) return schema.parse(answerLinks(user, links, also));
       const section = (name: string) => user.split(`\n${name}:\n`)[1]?.split("\n\n")[0] ?? "";
       const hubList = JSON.parse(section("Hubs") || "[]") as { id: string; page: string }[];
       const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
@@ -169,7 +170,11 @@ function stub(
 }
 
 /** Answers a link prompt: URL override by main query (or "none"), else the first hint. */
-function answerLinks(user: string, links: Record<string, string>): LinkAnswer {
+function answerLinks(
+  user: string,
+  links: Record<string, string>,
+  also: Record<string, string> = {},
+): LinkAnswer {
   const mapLines = (user.split("\nMap pages:\n")[1] ?? "").split("\n\n")[0] ?? "";
   const byQuery = new Map(
     mapLines
@@ -187,7 +192,12 @@ function answerLinks(user: string, links: Record<string, string>): LinkAnswer {
     results: existing.map((e) => {
       const want = links[e.url];
       if (want === "none") return { p: e.p, node: "none" };
-      return { p: e.p, node: (want && byQuery.get(want)) || e.likely?.[0] || "none" };
+      const second = also[e.url] ? byQuery.get(also[e.url] as string) : undefined;
+      return {
+        p: e.p,
+        node: (want && byQuery.get(want)) || e.likely?.[0] || "none",
+        ...(second ? { also: second } : {}),
+      };
     }),
   };
 }
@@ -359,12 +369,14 @@ describe("mapStep", () => {
     expect(kopen.level).toBe("seed");
     expect(kopen.intent).toEqual({ main: "transactional", mixed: false, source: "data" });
     expect(kopen.demand.cpc).toBeCloseTo((0.8 * 4000 + 0.4 * 900) / 4900, 2);
-    expect(kopen.linksOut.some((l) => l.to === "n-grote" && l.type === "child")).toBe(true);
     expect(kopen.why).toBe("Een eigen pagina voor kamerplanten kopen.");
 
+    // The site's own category page makes this a locked hub under home, at its URL, even though
+    // its words would nest it under "kamerplanten kopen".
     const grote = node(maps, "grote kamerplant kopen");
-    expect(grote.level).toBe("node");
-    expect(grote.parentId).toBe("n-kopen");
+    expect(grote.hub).toBe("site");
+    expect(grote.level).toBe("seed");
+    expect(grote.proposedUrl).toBe("/kamerplanten/grote-kamerplanten/");
 
     const verpotten = node(maps, "kamerplant verpotten");
     expect(verpotten.section).toBe("outer");
@@ -458,6 +470,61 @@ describe("mapStep", () => {
     const gele = node(maps, "gele bladeren kamerplant");
     expect(gele.existingPage).toBeNull();
     expect(gele.proposedUrl).toBe("/kamerplant-verpotten/gele-bladeren-kamerplant/");
+  });
+
+  it("offers the site's own sections first as hubs, marked, and never asks to move them", async () => {
+    const model = stub();
+    await runStep(newRun(), mapStep(model), { context, clusters, queries, pages, model: "fake" });
+    const label = model.prompts.find((p) => p.includes("\nHubs:\n")) ?? "";
+    const hubs = JSON.parse(label.split("\nHubs:\n")[1]?.split("\n\n")[0] ?? "[]") as {
+      page: string;
+      site?: boolean;
+    }[];
+    expect(hubs.find((h) => h.page === "grote kamerplant kopen")?.site).toBe(true);
+    const firstPlain = hubs.findIndex((h) => !h.site);
+    expect(hubs.slice(firstPlain).some((h) => h.site)).toBe(false);
+    expect(label).toContain('"siteHub": true');
+  });
+
+  it("turns a small supporting page with nothing under it into a section of its hub", async () => {
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [
+        ...clusters.clusters,
+        cluster("tips", "outer", [["kamerplant verpotten tips", 10]]),
+      ],
+    });
+    const maps = await runStep(newRun(), mapStep(stub()), {
+      context,
+      clusters: set,
+      queries,
+      pages,
+      model: "fake",
+    });
+    expect(maps.maps[0]?.nodes.some((n) => n.mainQuery === "kamerplant verpotten tips")).toBe(
+      false,
+    );
+    expect(node(maps, "kamerplant verpotten").sections.map((s) => s.mainQuery)).toContain(
+      "kamerplant verpotten tips",
+    );
+  });
+
+  it("flags a page that competes for a second map page as differentiate", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub(
+          {},
+          { "/kamerplanten/xl-planten/": "kamerplanten kopen" },
+          { "/kamerplanten/xl-planten/": "grote kamerplant kopen" },
+        ),
+      ),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    expect(node(maps, "grote kamerplant kopen").conflict).toEqual({
+      urls: ["/kamerplanten/grote-kamerplanten/", "/kamerplanten/xl-planten/"],
+      suggestion: "differentiate",
+    });
   });
 
   it("keeps word matches when the model links nothing", async () => {
@@ -557,6 +624,20 @@ describe("finishMaps", () => {
     const n = maps.maps[0]?.nodes.find((x) => x.mainQuery === "kamerplant verpotten");
     expect(n?.why).toBe("Its own results page, so its own page.");
     expect(n?.rawNode).toEqual({ entity: "kamerplant", attribute: "kamerplant verpotten" });
+  });
+});
+
+describe("map shape", () => {
+  it("counts hubs, childless hubs, site hubs kept and the widest page", async () => {
+    const maps = await build();
+    const nodes = maps.maps[0]?.nodes ?? [];
+    const s = mapShape(nodes);
+    expect(s.hubs).toBe(nodes.filter((n) => n.level === "seed").length);
+    expect(s.siteHubs).toBeGreaterThanOrEqual(1);
+    expect(s.siteHubsKept).toBe(s.siteHubs);
+    const checks = shapeChecks(maps);
+    expect(checks.map((c) => c.kind)).toEqual(["shape", "shape", "shape"]);
+    expect(checks[2]?.status).toBe("pass");
   });
 });
 

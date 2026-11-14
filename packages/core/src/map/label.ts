@@ -6,6 +6,7 @@ import type { StepContext } from "../log/run-store.ts";
 import { pool } from "../research/collect.ts";
 import { defineStep } from "../step.ts";
 import {
+  anchorSiteHubs,
   finishMaps,
   hubChoices,
   type MapPlan,
@@ -23,7 +24,7 @@ import { linkPages } from "./link.ts";
  * adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "4" } as const;
+export const MAP_TEMPLATE = { id: "map-label", version: "5" } as const;
 
 /**
  * Step logic version (planner + prompt); bump when either changes. 1: first map.
@@ -33,8 +34,12 @@ export const MAP_TEMPLATE = { id: "map-label", version: "4" } as const;
  *    answer (asked again); pages with the same words fold together; batches of 15.
  * 4: existing pages are linked page by page (each picks the map page it serves, link.ts);
  *    outer URLs sit under their seed's slug.
+ * 5: the site's own service, category and location pages are locked hubs; top-level pages pick
+ *    a hub by meaning (site hubs first, "root" only for a main pillar); small childless outer
+ *    pages become sections of their hub; a page competing for a second node ("also") is a
+ *    differentiate conflict.
  */
-export const MAP_STEP_VERSION = "4";
+export const MAP_STEP_VERSION = "5";
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -50,7 +55,7 @@ export const LabelAnswer = z.object({
 });
 export type LabelAnswer = z.infer<typeof LabelAnswer>;
 
-/** Most hubs offered per prompt: core first, then demand. Enough for every map we have seen. */
+/** Most hubs offered per prompt: site hubs, then core, then demand. Enough for every map so far. */
 const MAX_HUBS = 120;
 
 export function buildLabelMessages(
@@ -68,7 +73,7 @@ export function buildLabelMessages(
     `- "attribute": the attribute of the central entity this page covers, in English, 1 to 4 words (e.g. "price", "for construction firms", "installation"). For the page that is just the entity itself, use "overview".`,
     `- "macroContext": in ${lang}, one sentence that describes the single main angle of the page, so two pages never cover the same thing. Describe it neutrally; don't address anyone.`,
     `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our").`,
-    `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"), or "root" when it belongs directly under "${entity}". Choose a hub only when the page is clearly a narrower part of that hub's topic. A core page never goes under an outer hub. Never pick the page itself.`,
+    `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"). Hubs marked "site" are sections the business's website already has (a service, product category or location): prefer them whenever the page is part of that topic, so new pages slot into the existing site. Choose "root" (directly under "${entity}") only when the page is itself a main pillar of the business, a main service, product category or theme that other pages will hang under; a page about one question, one detail or one variant is never root. A core page never goes under an outer hub. Never pick the page itself.`,
     'Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","parent":"h3"}]}. Answer every number exactly once.',
   ].join("\n");
   const profile = {
@@ -92,12 +97,15 @@ export function buildLabelMessages(
       ? {}
       : n.parentId
         ? { under: byId.get(n.parentId)?.mainQuery }
-        : { topLevel: true }),
+        : n.hub
+          ? { siteHub: true }
+          : { topLevel: true }),
   }));
   const hubList = hubs.map((h) => ({
     id: hubKey.get(h.id),
     page: h.mainQuery,
     tier: h.section,
+    ...(h.hub ? { site: true } : {}),
   }));
   return [
     { role: "system" as const, content: system },
@@ -153,8 +161,10 @@ export async function labelPlan(
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const hubs = hubChoices(plan, entity)
       .hubs.slice()
-      .sort((a, b) =>
-        a.section === b.section ? b.volume - a.volume : a.section === "core" ? -1 : 1,
+      .sort(
+        (a, b) =>
+          Number(!!b.hub) - Number(!!a.hub) ||
+          (a.section === b.section ? b.volume - a.volume : a.section === "core" ? -1 : 1),
       )
       .slice(0, MAX_HUBS);
     for (let i = 0; i < nodes.length; i += opts.batchSize) {
@@ -182,7 +192,7 @@ export async function labelPlan(
       if (r.attribute?.trim()) label.attribute = r.attribute.trim();
       if (r.macroContext?.trim()) label.macroContext = r.macroContext.trim();
       if (r.why?.trim()) label.why = r.why.trim();
-      if (!n.isRoot && !n.parentId) {
+      if (!n.isRoot && !n.parentId && !n.hub) {
         const pick = r.parent?.trim() ?? "";
         const hub = /^h\d+$/.test(pick) ? w.hubs[Number(pick.slice(1))] : undefined;
         if (pick === "root") label.parent = "root";
@@ -242,24 +252,30 @@ export function mapStep(llm: JsonModel) {
         })),
       });
       const meter = costMeter(ctx);
-      const labels = await labelPlan(
-        llm,
-        plan,
-        { model: input.model, batchSize: input.batchSize, concurrency: input.concurrency },
-        meter.rec,
-      );
-      const pageLinks = await linkPages(
+      // Existing pages first: the site's own sections become hubs the labels can build on.
+      const linked = await linkPages(
         llm,
         plan,
         input.pages,
         { model: input.model, concurrency: input.concurrency },
         meter.rec,
       );
+      const siteHubs = anchorSiteHubs(plan, input.pages, linked.links);
+      ctx.log.info("site hubs", {
+        hubs: [...siteHubs].map(([entity, ids]) => ({ entity, count: ids.length })),
+      });
+      const labels = await labelPlan(
+        llm,
+        plan,
+        { model: input.model, batchSize: input.batchSize, concurrency: input.concurrency },
+        meter.rec,
+      );
       return finishMaps({
         plan,
         labels,
         pages: input.pages,
-        pageLinks,
+        pageLinks: linked.links,
+        pageAlso: linked.also,
         runId: ctx.runId,
         createdAt: new Date().toISOString(),
         costUsd: meter.total(),

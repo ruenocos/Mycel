@@ -13,7 +13,7 @@ import { type MapPlan, type NodeDraft, type PageRef, scorePages } from "./build.
  * Word matches are only hints; the model may also say a page serves none of them (legal, jobs).
  */
 
-export const LINK_TEMPLATE = { id: "map-link", version: "1" } as const;
+export const LINK_TEMPLATE = { id: "map-link", version: "2" } as const;
 
 export const LinkAnswer = z.object({
   results: z.array(
@@ -21,6 +21,8 @@ export const LinkAnswer = z.object({
       p: z.number().int().nonnegative(),
       /** A map page id ("n12"), or "none". */
       node: z.string().max(12).nullish(),
+      /** A second map page this page clearly competes for too, if any. */
+      also: z.string().max(12).nullish(),
     }),
   ),
 });
@@ -43,8 +45,9 @@ export function buildLinkMessages(
     "For each numbered existing page, pick the one map page whose search it serves: the search a visitor would type to land on it. Judge meaning, not shared words: different words can mean the same search (prices = costs = rates, XL = large, reimbursed = covered by insurance).",
     'A category, service or pricing page serves the general or buying search; a blog or guide serves the question it answers. A page about one product, one town or one person serves that narrower search, not the general one. Use "none" when no map page fits (legal pages, jobs, news, the team).',
     "Several existing pages may pick the same map page when they really target the same search: that is cannibalisation, so report it honestly rather than spreading pages out.",
+    'Give "also" only when the page clearly competes for a second map page\'s search too, so a visitor searching it could land on either page (a "winter tyres" category next to "snow tyres"; a "how to choose a laptop" guide next to "best laptops"). Leave it out otherwise; a page merely related to its parent topic is not competing.',
     '"likely" lists map pages that share words with the page: hints only, often wrong.',
-    'Answer with JSON: {"results":[{"p":0,"node":"n12"}]}. Answer every number exactly once.',
+    'Answer with JSON: {"results":[{"p":0,"node":"n12","also":"n4"}]}. Answer every number exactly once.',
   ].join("\n");
   const map = nodes
     .map((n, i) => `n${i}: ${n.mainQuery} (${n.isRoot ? "home" : n.section})`)
@@ -67,9 +70,9 @@ export function buildLinkMessages(
 }
 
 /**
- * Asks the model, in batches, which map page each existing page serves. Returns url → node id
- * (or null for "none"), per entity. A page the model skipped after a retry falls back to the
- * word score, and the count is logged.
+ * Asks the model, in batches, which map page each existing page serves. Returns links: url →
+ * node id (or null for "none"), and also: url → a second node it competes for. A page the model
+ * skipped after a retry falls back to the word score, and the count is logged.
  */
 export async function linkPages(
   llm: JsonModel,
@@ -77,10 +80,11 @@ export async function linkPages(
   pages: PageRef[],
   opts: { model: string; concurrency: number; batchSize?: number },
   ctx: StepContext,
-): Promise<Map<string, string | null>> {
+): Promise<PageLinks> {
   const out = new Map<string, string | null>();
+  const also = new Map<string, string>();
   const linkable = linkablePages(pages);
-  if (!linkable.length) return out;
+  if (!linkable.length) return { links: out, also };
   const size = opts.batchSize ?? 20;
   for (const { entity, nodes } of plan.entities) {
     const scores = scorePages(nodes, linkable, plan.context);
@@ -97,6 +101,7 @@ export async function linkPages(
     for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size));
     let invalid = 0;
     const got = new Map<string, string | null>();
+    const gotAlso = new Map<string, string>();
     const ask = async (batch: typeof items, seed: number) => {
       const answer = await llm.generateJson(
         {
@@ -114,7 +119,14 @@ export async function linkPages(
         const pick = r.node?.trim() ?? "";
         if (pick === "none") got.set(item.page.url, null);
         else if (byKey.has(pick)) got.set(item.page.url, (byKey.get(pick) as NodeDraft).id);
-        else invalid++;
+        else {
+          invalid++;
+          continue;
+        }
+        const second = byKey.get(r.also?.trim() ?? "");
+        if (second && pick !== "none" && second.id !== got.get(item.page.url)) {
+          gotAlso.set(item.page.url, second.id);
+        }
       }
     };
     await pool(batches, opts.concurrency, (b) => ask(b, 21));
@@ -130,11 +142,20 @@ export async function linkPages(
     if (invalid) ctx.log.warn("model named map pages that don't exist", { invalid });
     // Several maps: a page belongs to the map whose page it serves; "none" only if none does.
     for (const [url, id] of got) if (id || !out.has(url)) out.set(url, id);
+    for (const [url, id] of gotAlso) if (out.get(url)) also.set(url, id);
     ctx.log.info("existing pages linked", {
       entity,
       pages: items.length,
       linked: [...got.values()].filter(Boolean).length,
+      competing: gotAlso.size,
     });
   }
-  return out;
+  return { links: out, also };
+}
+
+export interface PageLinks {
+  /** Existing page URL → the node it serves, or null for none. */
+  links: Map<string, string | null>;
+  /** Existing page URL → a second node it competes for. */
+  also: Map<string, string>;
 }

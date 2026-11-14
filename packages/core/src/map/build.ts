@@ -52,6 +52,8 @@ export interface NodeDraft {
   aiOverview: { present: boolean; cited: boolean } | null;
   /** Parent from the word rule; undefined = top level (model may pick a hub). */
   parentId?: string;
+  /** An existing service, category or location page sits on it: a locked hub (anchorSiteHubs). */
+  hub?: "site";
   qdpWhy: string;
 }
 
@@ -350,11 +352,53 @@ export function planMaps(input: {
   return { context, entities };
 }
 
-/** Top-level pages that may receive a model-chosen hub, and the hubs they may pick from. */
+/**
+ * Top-level pages that may receive a model-chosen hub, and the hubs they may pick from. Site hubs
+ * are locked under the root: they are offered as hubs but never moved.
+ */
 export function hubChoices(plan: MapPlan, entity: string) {
   const nodes = plan.entities.find((e) => e.entity === entity)?.nodes ?? [];
   const top = nodes.filter((n) => !n.isRoot && !n.parentId);
-  return { pages: top, hubs: top };
+  return { pages: top.filter((n) => !n.hub), hubs: top };
+}
+
+/** Page kinds that are a section of the site: what the business offers, sells or where. */
+const HUB_KINDS = new Set<SitePage["kind"]>(["service", "category", "location"]);
+
+/**
+ * Grab the existing structure: a node that an existing service, category or location page serves
+ * becomes a site hub, locked under the root at that page's URL. A word-rule parent only stays
+ * when it is a site hub too (category > subcategory). Pages the model didn't judge fall back to
+ * the word score. Returns the hubs found per entity.
+ */
+export function anchorSiteHubs(
+  plan: MapPlan,
+  pages: PageRef[],
+  pageLinks?: Map<string, string | null>,
+): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  const hubPages = pages.filter((p) => HUB_KINDS.has(p.kind) && !isHome(p));
+  for (const { entity, nodes } of plan.entities) {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const words = new Map<string, string>();
+    for (const [id, urls] of matchPages(nodes, hubPages, plan.context)) {
+      for (const url of urls) words.set(url, id);
+    }
+    const ids: string[] = [];
+    for (const page of hubPages) {
+      const id = pageLinks?.has(page.url) ? pageLinks.get(page.url) : words.get(page.url);
+      const n = id ? byId.get(id) : undefined;
+      if (!n || n.isRoot || n.hub) continue;
+      n.hub = "site";
+      ids.push(n.id);
+    }
+    for (const id of ids) {
+      const n = byId.get(id) as NodeDraft;
+      if (n.parentId && !byId.get(n.parentId)?.hub) delete n.parentId;
+    }
+    found.set(entity, ids);
+  }
+  return found;
 }
 
 /**
@@ -491,6 +535,9 @@ export function pageCandidates(
 
 const CONTENT_KINDS = new Set(["blog", "guide"]);
 
+/** Below this monthly volume a childless supporting page under a hub becomes a section of it. */
+export const FOLD_VOLUME = 20;
+
 /** Step 2: labels and hub choices in, finished maps out. */
 export function finishMaps(input: {
   plan: MapPlan;
@@ -498,6 +545,8 @@ export function finishMaps(input: {
   pages?: PageRef[];
   /** Existing page URL → the node it serves (null: none), from the model (link.ts). */
   pageLinks?: Map<string, string | null>;
+  /** Existing page URL → a second node it clearly competes for too (link.ts). */
+  pageAlso?: Map<string, string>;
   runId: string;
   createdAt: string;
   costUsd: number;
@@ -505,9 +554,10 @@ export function finishMaps(input: {
   const { plan, labels } = input;
   const ctx = plan.context;
   const maps: TopicalMap[] = [];
-  for (const { entity, nodes } of plan.entities) {
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    const root = nodes[0] as NodeDraft;
+  for (const { entity, nodes: drafts } of plan.entities) {
+    const root = drafts[0] as NodeDraft;
+    let nodes = drafts;
+    let byId = new Map(nodes.map((n) => [n.id, n]));
 
     // Hubs from the model for top-level pages, kept only when valid and loop-free.
     const parent = new Map<string, string>();
@@ -531,6 +581,51 @@ export function finishMaps(input: {
       if (loops(n.id, hub.id)) continue;
       parent.set(n.id, hub.id);
     }
+    // Existing pages: the model's page-by-page answer when it gave one ("none" included); else,
+    // and for pages it skipped, the word score. One page sits on one node.
+    const pageList = input.pages ?? [];
+    const kindOf = new Map(pageList.map((p) => [p.url, p.kind]));
+    const words = matchPages(nodes, pageList, ctx);
+    const wordNode = new Map<string, string>();
+    for (const [id, urls] of words) for (const url of urls) wordNode.set(url, id);
+    const linked = new Map<string, string[]>();
+    const add = (id: string, url: string) => linked.set(id, [...(linked.get(id) ?? []), url]);
+    const home = pageList.find(isHome);
+    if (home) add(root.id, home.url);
+    for (const page of pageList) {
+      if (isHome(page) || SKIP_KINDS.has(page.kind)) continue;
+      const judged = input.pageLinks?.has(page.url);
+      const id = judged ? input.pageLinks?.get(page.url) : wordNode.get(page.url);
+      if (id && byId.has(id) && id !== root.id) add(id, page.url);
+    }
+
+    // Query Deserves a Page: a small supporting page with nothing under it and no existing page
+    // becomes a section of the hub it sits under, instead of a thin page of its own.
+    const hasKids = new Set(parent.values());
+    const folded = new Map<string, MapSection[]>();
+    for (const n of nodes) {
+      const p = parent.get(n.id);
+      if (n.isRoot || n.hub || n.section !== "outer" || !p || p === root.id) continue;
+      if (n.volume >= FOLD_VOLUME || hasKids.has(n.id) || linked.has(n.id)) continue;
+      folded.set(p, [
+        ...(folded.get(p) ?? []),
+        {
+          clusterId: n.clusterId ?? n.id,
+          mainQuery: n.mainQuery,
+          qdp: "section",
+          queries: n.queries,
+          volume: n.volume,
+        },
+      ]);
+      parent.delete(n.id);
+    }
+    if (folded.size) {
+      nodes = nodes.filter((n) => n.isRoot || parent.has(n.id));
+      byId = new Map(nodes.map((n) => [n.id, n]));
+    }
+    const sectionsOf = (n: NodeDraft) =>
+      [...n.sections, ...(folded.get(n.id) ?? [])].sort((a, b) => b.volume - a.volume);
+
     const children = new Map<string, NodeDraft[]>();
     for (const [id, p] of parent) {
       const list = children.get(p) ?? [];
@@ -558,27 +653,8 @@ export function finishMaps(input: {
     const qualityCount = Math.max(3, Math.min(12, Math.ceil(coreRanked.length * 0.1)));
     const quality = new Set([root.id, ...coreRanked.slice(0, qualityCount).map((n) => n.id)]);
 
-    // Existing pages: the model's links when it gave them, else the word score. One page sits
-    // on one node: claimed twice, it goes to the node it matches best (then the bigger one).
-    const pageList = input.pages ?? [];
-    const kindOf = new Map(pageList.map((p) => [p.url, p.kind]));
     const scores = scorePages(nodes, pageList, ctx);
     const scoreOf = (url: string, id: string) => scores.get(url)?.get(id) ?? { score: 0, h1: 0 };
-    // The model's page-by-page answer when it gave one ("none" included); else, and for pages
-    // it skipped, the word score.
-    const words = matchPages(nodes, pageList, ctx, scores);
-    const wordNode = new Map<string, string>();
-    for (const [id, urls] of words) for (const url of urls) wordNode.set(url, id);
-    const linked = new Map<string, string[]>();
-    const add = (id: string, url: string) => linked.set(id, [...(linked.get(id) ?? []), url]);
-    const home = pageList.find(isHome);
-    if (home) add(root.id, home.url);
-    for (const page of pageList) {
-      if (isHome(page) || SKIP_KINDS.has(page.kind)) continue;
-      const judged = input.pageLinks?.has(page.url);
-      const id = judged ? input.pageLinks?.get(page.url) : wordNode.get(page.url);
-      if (id && byId.has(id) && id !== root.id) add(id, page.url);
-    }
     const pagesOf = (n: NodeDraft) =>
       (linked.get(n.id) ?? [])
         .map((url) => ({ url, kind: kindOf.get(url) ?? "other", ...scoreOf(url, n.id) }))
@@ -643,6 +719,8 @@ export function finishMaps(input: {
         add(p, p.section === "core" ? "to_core" : "parent");
         if (n.section === "outer" && p.section !== "core") add(nearestCore(n), "to_core");
       }
+      // Home links its quality nodes as such (step 13), before its other children.
+      if (n.isRoot) for (const id of quality) add(byId.get(id), "from_home");
       const kids = (children.get(n.id) ?? []).sort((a, b) => score(b) - score(a));
       for (const k of kids.slice(0, 12)) add(k, "child");
       // Seeds are all siblings under the root: they get topical bridges instead (below).
@@ -664,7 +742,6 @@ export function finishMaps(input: {
           .slice(0, 3);
         for (const { s } of near) add(s, "bridge");
       }
-      if (n.isRoot) for (const id of quality) add(byId.get(id), "from_home");
       return out;
     };
 
@@ -672,14 +749,21 @@ export function finishMaps(input: {
       const label = labels.get(n.id) ?? {};
       const pagesHere = pagesOf(n);
       const top = pagesHere[0];
-      const conflictUrls = pagesHere.map((p) => p.url);
+      // A page that sits elsewhere but competes for this search too (the model's "also").
+      const rivals = top
+        ? [...(input.pageAlso ?? [])]
+            .filter(([url, id]) => id === n.id && !pagesHere.some((p) => p.url === url))
+            .map(([url]) => url)
+        : [];
+      const conflictUrls = [...pagesHere.map((p) => p.url), ...rivals];
       const conflict =
         !n.isRoot && conflictUrls.length >= 2
           ? {
               urls: conflictUrls,
               suggestion:
-                pagesHere.some((p) => CONTENT_KINDS.has(p.kind)) &&
-                pagesHere.some((p) => !CONTENT_KINDS.has(p.kind))
+                rivals.length ||
+                (pagesHere.some((p) => CONTENT_KINDS.has(p.kind)) &&
+                  pagesHere.some((p) => !CONTENT_KINDS.has(p.kind)))
                   ? ("differentiate" as const)
                   : ("merge" as const),
             }
@@ -690,6 +774,7 @@ export function finishMaps(input: {
         section: n.section,
         level: level(n),
         ...(p ? { parentId: p } : {}),
+        ...(n.hub ? { hub: n.hub } : {}),
         rawNode: {
           entity,
           attribute: label.attribute?.trim() || (n.isRoot ? "overview" : n.mainQuery),
@@ -698,7 +783,7 @@ export function finishMaps(input: {
         ...(n.clusterId ? { clusterId: n.clusterId } : {}),
         mainQuery: n.mainQuery,
         queries: n.queries,
-        sections: n.sections,
+        sections: sectionsOf(n),
         intent: n.intent,
         proposedUrl: urlOf.get(n.id) as string,
         existingPage: top ? { url: top.url, matchScore: Math.round(top.score * 100) / 100 } : null,

@@ -6,6 +6,7 @@ import {
   checkGate,
   formatTimeline,
   type GateResult,
+  mapShape,
   mapStep,
   type PageRef,
   RunStore,
@@ -81,6 +82,7 @@ export function summarizeMaps(d: SiteMaps): string[] {
     lines.push(
       `map         ${m.header.centralEntity.name}: ${n.length} pages, ${count((x) => x.section === "core")} core, ${count((x) => x.section === "outer")} outer`,
       `levels      ${count((x) => x.level === "seed")} seeds under the root, ${count((x) => x.level === "node")} deeper`,
+      shapeLine(n),
       `intent      ${[...intents.entries()]
         .sort((a, b) => b[1] - a[1])
         .map(([k, v]) => `${k} ${v}`)
@@ -98,6 +100,12 @@ export function summarizeMaps(d: SiteMaps): string[] {
     if (first.length) lines.push(`do first    ${first.join(", ")}`);
   }
   return lines;
+}
+
+function shapeLine(nodes: SiteMaps["maps"][number]["nodes"]): string {
+  const s = mapShape(nodes);
+  const pct = s.hubs ? Math.round((s.childless / s.hubs) * 100) : 0;
+  return `shape       ${s.siteHubs} site hubs (${s.siteHubsKept} kept), ${s.childless} of ${s.hubs} seeds without children (${pct}%), widest ${s.widest ? `"${s.widest.mainQuery}" (${s.widest.children})` : "none"}`;
 }
 
 export function gateLines(g: GateResult): string[] {
