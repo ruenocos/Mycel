@@ -104,7 +104,8 @@ export function anchorSiteHubs(
     for (const page of hubPages) {
       if (served.has(page.url)) continue;
       const title = pageTitle(page, ctx.site.name);
-      if (!title) continue;
+      // A question ("Staat jouw sector er niet bij?") is a catch-all page, not a section.
+      if (!title || title.endsWith("?")) continue;
       let id = `site-${slugify(page.url)}`;
       for (let i = 2; taken.has(id); i++) id = `site-${slugify(page.url)}-${i}`;
       taken.add(id);

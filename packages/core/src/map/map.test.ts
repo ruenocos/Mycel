@@ -800,6 +800,45 @@ describe("round 7: usable output", () => {
     ).toBe(true);
   });
 
+  it("folds two new pages the model gave the same title into one", async () => {
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [
+        ...clusters.clusters,
+        cluster("wat1", "outer", [["wat is een kamerplant", 300]]),
+        cluster("wat2", "outer", [["wat zijn kamerplanten precies", 90]]),
+      ],
+    });
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub({}, undefined, {}, undefined, {
+          "wat is een kamerplant": { name: "Wat is een kamerplant?" },
+          "wat zijn kamerplanten precies": { name: "Wat is een kamerplant" },
+        }),
+      ),
+      { context, clusters: set, queries, pages, model: "fake" },
+    );
+    expect(maps.maps[0]?.nodes.some((n) => n.mainQuery === "wat zijn kamerplanten precies")).toBe(
+      false,
+    );
+    expect(node(maps, "wat is een kamerplant").sections.map((x) => x.mainQuery)).toContain(
+      "wat zijn kamerplanten precies",
+    );
+  });
+
+  it("never makes a catch-all question page a hub", () => {
+    const plan = planMaps({ context, clusters, queries });
+    const ask: PageRef = {
+      url: "/kamerplanten/staat-je-plant-er-niet-bij/",
+      kind: "category",
+      title: "Staat je plant er niet bij?",
+      h1: "Staat je plant er niet bij?",
+    };
+    const { links } = anchorSiteHubs(plan, [...pages, ask], new Map([[ask.url, null]]));
+    expect(links.get(ask.url)).toBeNull();
+  });
+
   it("keeps a section page no search covers as a hub without demand", () => {
     const plan = planMaps({ context, clusters, queries });
     const sector: PageRef = {

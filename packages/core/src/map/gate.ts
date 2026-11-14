@@ -63,7 +63,8 @@ export function mapShape(nodes: MapNode[]): MapShape {
     siteHubsKept: site.filter(
       (n) => n.level === "seed" || byId.get(n.parentId ?? "")?.hub === "site",
     ).length,
-    childless: hubs.filter((n) => !kids.get(n.id)).length,
+    // The site's own sections may stand alone; a flat map is about the pages the map proposes.
+    childless: hubs.filter((n) => n.hub !== "site" && !kids.get(n.id)).length,
     widest: widest ?? null,
   };
 }
@@ -77,7 +78,7 @@ export function shapeChecks(maps: SiteMaps): GateCheck[] {
     const share = s.hubs ? s.childless / s.hubs : 0;
     checks.push({
       kind: "shape",
-      expect: `${name}: at most ${SHAPE.maxChildlessShare * 100}% of top-level pages without children`,
+      expect: `${name}: at most ${SHAPE.maxChildlessShare * 100}% of top-level pages without children (the site's own sections excepted)`,
       status: share <= SHAPE.maxChildlessShare ? "pass" : "fail",
       detail: `${s.childless} of ${s.hubs} (${Math.round(share * 100)}%)`,
     });

@@ -180,7 +180,7 @@ function themeNode(
     isRoot: false,
     section: core ? "core" : "outer",
     mainQuery: name,
-    name,
+    name: name.charAt(0).toUpperCase() + name.slice(1),
     queries: [],
     sections: [],
     volume: 0,

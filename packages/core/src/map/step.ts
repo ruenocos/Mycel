@@ -44,8 +44,12 @@ import { anchorSiteHubs } from "./site.ts";
  *    plan of about 30; tiny pages fold more; section pages stay hubs without demand; URLs follow
  *    the site's folders and are cut at a word; the model judges merge vs differentiate; existing
  *    pages outside the map are listed; hubs over 25 children are grouped.
+ * 8: places without a location are left out whatever their volume (map-label v7); a question
+ *    page is never a hub; new pages with the same title fold together; a site hub shows its
+ *    section page, not an article on it; theme names start with a capital; the gate's
+ *    childless check leaves the site's own sections out.
  */
-export const MAP_STEP_VERSION = "7";
+export const MAP_STEP_VERSION = "8";
 
 export const MapInput = z.object({
   context: ClientContext,

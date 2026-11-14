@@ -9,7 +9,7 @@ import type {
 import { planActions } from "./actions.ts";
 import { linkPlan } from "./links.ts";
 import type { Intent, MapPlan, NodeDraft, NodeLabel } from "./plan.ts";
-import { CONTENT_KINDS, FOLD, SKIP_KINDS } from "./rules.ts";
+import { CONTENT_KINDS, FOLD, HUB_KINDS, SKIP_KINDS } from "./rules.ts";
 import { isHome, isWordMatch, matchPages, type PageRef, pageTitle, scorePages } from "./site.ts";
 import { proposeUrls } from "./urls.ts";
 
@@ -184,23 +184,42 @@ function finishOne(
       detach(parent, n.id);
   }
 
+  const folded = new Map<string, MapSection[]>();
+  const asSection = (n: NodeDraft): MapSection => ({
+    clusterId: n.clusterId ?? n.id,
+    mainQuery: n.mainQuery,
+    qdp: "section",
+    queries: n.queries,
+    volume: n.volume,
+  });
+  // Two new pages the model gave the same title are one page: the smaller becomes a section.
+  const sameName = new Map<string, NodeDraft>();
+  const titleKey = (n: NodeDraft) =>
+    (labels.get(n.id)?.name ?? "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  const kidsNow = new Set(parent.values());
+  for (const n of [...nodes].sort((a, b) => b.volume - a.volume)) {
+    const key = titleKey(n);
+    if (!key || n.isRoot || n.hub || !parent.has(n.id)) continue;
+    const keep = sameName.get(key);
+    if (!keep) {
+      sameName.set(key, n);
+      continue;
+    }
+    if (linked.has(n.id) || kidsNow.has(n.id)) continue;
+    folded.set(keep.id, [...(folded.get(keep.id) ?? []), asSection(n)]);
+    parent.delete(n.id);
+  }
+
   // Tiny pages become sections of their hub (shouldFold).
   const hasKids = new Set(parent.values());
-  const folded = new Map<string, MapSection[]>();
   for (const n of nodes) {
     const p = parent.get(n.id);
     if (n.isRoot || n.hub || !p || p === root.id) continue;
     if (hasKids.has(n.id) || linked.has(n.id) || !shouldFold(n)) continue;
-    folded.set(p, [
-      ...(folded.get(p) ?? []),
-      {
-        clusterId: n.clusterId ?? n.id,
-        mainQuery: n.mainQuery,
-        qdp: "section",
-        queries: n.queries,
-        volume: n.volume,
-      },
-    ]);
+    folded.set(p, [...(folded.get(p) ?? []), asSection(n)]);
     parent.delete(n.id);
   }
   nodes = nodes.filter((n) => n.isRoot || parent.has(n.id));
@@ -229,7 +248,12 @@ function finishOne(
     (linked.get(n.id) ?? [])
       .map((url) => ({ url, kind: kindOf.get(url) ?? "other", ...scoreOf(url, n.id) }))
       .map((x) => (x.url === "/" || x.kind === "home" ? { ...x, score: 1, h1: 1 } : x))
-      .sort((a, b) => b.score + b.h1 - (a.score + a.h1));
+      // A site hub is its section page first, whatever an article on it scores.
+      .sort(
+        (a, b) =>
+          (n.hub === "site" ? Number(HUB_KINDS.has(b.kind)) - Number(HUB_KINDS.has(a.kind)) : 0) ||
+          b.score + b.h1 - (a.score + a.h1),
+      );
 
   // Competing pages. A page that sits elsewhere but competes for this search too (the model's
   // "also") or an article next to an offer page are told apart; two pages of one kind for one
