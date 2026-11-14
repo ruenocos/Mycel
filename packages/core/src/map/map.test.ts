@@ -135,6 +135,7 @@ function stub(
   hubs: Record<string, string> = {},
   links: Record<string, string> = { "/kamerplanten/xl-planten/": "grote kamerplant kopen" },
   also: Record<string, string> = {},
+  group: (pages: { id: string; page: string }[]) => unknown = () => ({ groups: [] }),
 ): JsonModel & { calls: number; prompts: string[] } {
   const model = {
     calls: 0,
@@ -147,6 +148,13 @@ function stub(
       const user = req.messages[1]?.content ?? "";
       model.prompts.push(user);
       if (user.includes("\nMap pages:\n")) return schema.parse(answerLinks(user, links, also));
+      if (user.includes("\nPages under ")) {
+        const list = JSON.parse(user.split(":\n").slice(-1)[0] ?? "[]") as {
+          id: string;
+          page: string;
+        }[];
+        return schema.parse(group(list));
+      }
       const section = (name: string) => user.split(`\n${name}:\n`)[1]?.split("\n\n")[0] ?? "";
       const hubList = JSON.parse(section("Hubs") || "[]") as { id: string; page: string }[];
       const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
@@ -527,6 +535,63 @@ describe("mapStep", () => {
       urls: ["/kamerplanten/grote-kamerplanten/", "/kamerplanten/xl-planten/"],
       suggestion: "differentiate",
     });
+  });
+
+  it("groups loose top-level pages under a new theme hub the model names", async () => {
+    const extra = [
+      "kamerplant weinig licht",
+      "kamerplant volle zon",
+      "kamerplant schaduw",
+      "kamerplant cadeau",
+      "kamerplant bezorgen",
+      "kamerplant verjaardag",
+      "kamerplant badkamer",
+    ];
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [
+        ...clusters.clusters,
+        ...extra.map((q, i) => cluster(`x${i}`, "core", [[q, 300]])),
+      ],
+    });
+    const byName = (list: { id: string; page: string }[], ...names: string[]) =>
+      names.map((n) => list.find((p) => p.page === n)?.id as string);
+    const model = stub({}, undefined, {}, (list) => ({
+      groups: [
+        {
+          name: "kamerplant kiezen",
+          why: "Zo vind je de juiste plant voor elke plek in huis.",
+          members: byName(
+            list,
+            "kamerplant weinig licht",
+            "kamerplant volle zon",
+            "kamerplant schaduw",
+          ),
+        },
+        // Too small: dropped.
+        { name: "cadeau", members: byName(list, "kamerplant cadeau", "kamerplant verjaardag") },
+      ],
+    }));
+    const maps = await runStep(newRun(), mapStep(model), {
+      context,
+      clusters: set,
+      queries,
+      pages,
+      model: "fake",
+    });
+    const theme = node(maps, "kamerplant kiezen");
+    expect(theme).toMatchObject({ hub: "theme", level: "seed", section: "core" });
+    expect(theme.why).toBe("Zo vind je de juiste plant voor elke plek in huis.");
+    expect(node(maps, "kamerplant schaduw").parentId).toBe(theme.id);
+    expect(node(maps, "kamerplant cadeau").level).toBe("seed");
+    expect(TopicalMap.safeParse(maps.maps[0]).success).toBe(true);
+  });
+
+  it("names a site hub after its own page", async () => {
+    const maps = await build();
+    expect(node(maps, "grote kamerplant kopen").name).toBe(
+      pages.find((p) => p.url === "/kamerplanten/grote-kamerplanten/")?.h1,
+    );
   });
 
   it("keeps word matches when the model links nothing", async () => {

@@ -52,8 +52,11 @@ export interface NodeDraft {
   aiOverview: { present: boolean; cited: boolean } | null;
   /** Parent from the word rule; undefined = top level (model may pick a hub). */
   parentId?: string;
-  /** An existing service, category or location page sits on it: a locked hub (anchorSiteHubs). */
-  hub?: "site";
+  /**
+   * "site": an existing service, category or location page sits on it, a locked hub
+   * (anchorSiteHubs). "theme": a new hub the model proposed to group pages (group.ts).
+   */
+  hub?: "site" | "theme";
   qdpWhy: string;
 }
 
@@ -560,6 +563,49 @@ const CONTENT_KINDS = new Set(["blog", "guide"]);
 
 /** Below this monthly volume a childless supporting page under a hub becomes a section of it. */
 export const FOLD_VOLUME = 20;
+/** A page whose clicks cost this much (EUR) or more is never folded. */
+export const FOLD_MAX_CPC = 1;
+
+/** True when hanging id under candidate would make a loop. */
+function createsLoop(
+  parent: Map<string, string>,
+  rootId: string,
+  id: string,
+  candidate: string,
+): boolean {
+  let p: string | undefined = candidate;
+  const seen = new Set([id]);
+  while (p && p !== rootId) {
+    if (seen.has(p)) return true;
+    seen.add(p);
+    p = parent.get(p);
+  }
+  return false;
+}
+
+/**
+ * Parent per page: the word rule, else the model's hub for a top-level page when valid (not
+ * itself, not the root, a core page never under an outer one, no loops), else the root.
+ */
+export function resolveParents(
+  nodes: NodeDraft[],
+  labels: Map<string, NodeLabel>,
+): Map<string, string> {
+  const root = nodes.find((n) => n.isRoot) as NodeDraft;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const parent = new Map<string, string>();
+  for (const n of nodes) if (!n.isRoot) parent.set(n.id, n.parentId ?? root.id);
+  for (const n of nodes) {
+    if (n.isRoot || n.parentId || n.hub) continue;
+    const pick = labels.get(n.id)?.parent;
+    const hub = pick && pick !== "root" ? byId.get(pick) : undefined;
+    if (!hub || hub === n || hub.isRoot) continue;
+    if (n.section === "core" && hub.section === "outer") continue;
+    if (createsLoop(parent, root.id, n.id, hub.id)) continue;
+    parent.set(n.id, hub.id);
+  }
+  return parent;
+}
 
 /** Step 2: labels and hub choices in, finished maps out. */
 export function finishMaps(input: {
@@ -570,6 +616,8 @@ export function finishMaps(input: {
   pageLinks?: Map<string, string | null>;
   /** Existing page URL → a second node it clearly competes for too (link.ts). */
   pageAlso?: Map<string, string>;
+  /** Per entity: theme hubs the model proposed and the pages that move under a hub (group.ts). */
+  groups?: Map<string, { themes: NodeDraft[]; parents: Map<string, string> }>;
   runId: string;
   createdAt: string;
   costUsd: number;
@@ -582,27 +630,20 @@ export function finishMaps(input: {
     let nodes = drafts;
     let byId = new Map(nodes.map((n) => [n.id, n]));
 
-    // Hubs from the model for top-level pages, kept only when valid and loop-free.
-    const parent = new Map<string, string>();
-    for (const n of nodes) if (!n.isRoot) parent.set(n.id, n.parentId ?? root.id);
-    const loops = (id: string, candidate: string) => {
-      let p: string | undefined = candidate;
-      const seen = new Set([id]);
-      while (p && p !== root.id) {
-        if (seen.has(p)) return true;
-        seen.add(p);
-        p = parent.get(p);
-      }
-      return false;
-    };
-    for (const n of nodes) {
-      if (n.isRoot || n.parentId) continue;
-      const pick = labels.get(n.id)?.parent;
-      const hub = pick && pick !== "root" ? byId.get(pick) : undefined;
-      if (!hub || hub === n || hub.isRoot) continue;
+    // Hubs from the model for top-level pages, then theme groups, kept only when valid.
+    const groups = input.groups?.get(entity);
+    if (groups?.themes.length) {
+      nodes = [...nodes, ...groups.themes];
+      byId = new Map(nodes.map((n) => [n.id, n]));
+    }
+    const parent = resolveParents(nodes, labels);
+    for (const [id, hubId] of groups?.parents ?? []) {
+      const n = byId.get(id);
+      const hub = byId.get(hubId);
+      if (!n || !hub || n.isRoot || n.hub === "site" || hub === n) continue;
       if (n.section === "core" && hub.section === "outer") continue;
-      if (loops(n.id, hub.id)) continue;
-      parent.set(n.id, hub.id);
+      if (createsLoop(parent, root.id, id, hubId)) continue;
+      parent.set(id, hubId);
     }
     // Existing pages: the model's page-by-page answer when it gave one ("none" included); else,
     // and for pages it skipped, the word score. One page sits on one node.
@@ -630,6 +671,9 @@ export function finishMaps(input: {
       const p = parent.get(n.id);
       if (n.isRoot || n.hub || n.section !== "outer" || !p || p === root.id) continue;
       if (n.volume >= FOLD_VOLUME || hasKids.has(n.id) || linked.has(n.id)) continue;
+      // Low volume isn't low value when people buy: a page with buying intent or a real click
+      // price (B2B searches are small but costly) keeps its own page.
+      if (n.intent.main !== "informational" || (n.cpc ?? 0) >= FOLD_MAX_CPC) continue;
       folded.set(p, [
         ...(folded.get(p) ?? []),
         {
@@ -676,6 +720,16 @@ export function finishMaps(input: {
     const qualityCount = Math.max(3, Math.min(12, Math.ceil(coreRanked.length * 0.1)));
     const quality = new Set([root.id, ...coreRanked.slice(0, qualityCount).map((n) => n.id)]);
 
+    const pageName = (url: string) => {
+      const pg = pageList.find((x) => x.url === url);
+      const clean = (t: string) =>
+        t
+          .replace(siteName, "")
+          .replace(/^[\s|–—:-]+|[\s|–—:-]+$/g, "")
+          .trim();
+      return (pg && (clean(pg.h1) || clean(pg.title))) || "";
+    };
+    const siteName = new RegExp(ctx.site.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
     const scores = scorePages(nodes, pageList, ctx);
     const scoreOf = (url: string, id: string) => scores.get(url)?.get(id) ?? { score: 0, h1: 0 };
     const pagesOf = (n: NodeDraft) =>
@@ -798,6 +852,7 @@ export function finishMaps(input: {
         level: level(n),
         ...(p ? { parentId: p } : {}),
         ...(n.hub ? { hub: n.hub } : {}),
+        ...(n.hub === "site" && top && pageName(top.url) ? { name: pageName(top.url) } : {}),
         rawNode: {
           entity,
           attribute: label.attribute?.trim() || (n.isRoot ? "overview" : n.mainQuery),

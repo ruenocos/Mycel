@@ -45,8 +45,11 @@ export const MapNode = z.object({
   /**
    * "site": an existing section of the client's site (a service, category or location page).
    * It stays a hub at its URL; search data hangs new pages under it instead of replacing it.
+   * "theme": a new hub page that groups pages sharing one theme.
    */
-  hub: z.enum(["site"]).optional(),
+  hub: z.enum(["site", "theme"]).optional(),
+  /** Display name: a site hub's own page heading, e.g. "Projectplanning". */
+  name: z.string().min(1).optional(),
   /** Koray raw node: entity + attribute, e.g. ERP + bouwbedrijven. */
   rawNode: z.object({ entity: z.string().min(1), attribute: z.string().min(1) }),
   /** One macro context per page. */

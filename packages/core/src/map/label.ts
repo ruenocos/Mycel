@@ -14,6 +14,7 @@ import {
   type NodeLabel,
   planMaps,
 } from "./build.ts";
+import { groupPages } from "./group.ts";
 import { linkPages } from "./link.ts";
 
 /**
@@ -38,8 +39,11 @@ export const MAP_TEMPLATE = { id: "map-label", version: "5" } as const;
  *    a hub by meaning (site hubs first, "root" only for a main pillar); small childless outer
  *    pages become sections of their hub; a page competing for a second node ("also") is a
  *    differentiate conflict.
+ * 6: the model reads untyped pages' kinds while linking (map-link v3); site hubs carry their
+ *    page's name; folding keeps buying-intent and costly-click pages; loose top-level pages and
+ *    hubs over 40 children are grouped by theme (map-group v1).
  */
-export const MAP_STEP_VERSION = "5";
+export const MAP_STEP_VERSION = "6";
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -260,7 +264,12 @@ export function mapStep(llm: JsonModel) {
         { model: input.model, concurrency: input.concurrency },
         meter.rec,
       );
-      const siteHubs = anchorSiteHubs(plan, input.pages, linked.links);
+      // The model's read of untyped pages (WordPress custom types arrive as "other").
+      const pages = input.pages.map((p) => {
+        const kind = linked.kinds.get(p.url);
+        return kind ? { ...p, kind } : p;
+      });
+      const siteHubs = anchorSiteHubs(plan, pages, linked.links);
       ctx.log.info("site hubs", {
         hubs: [...siteHubs].map(([entity, ids]) => ({ entity, count: ids.length })),
       });
@@ -270,10 +279,18 @@ export function mapStep(llm: JsonModel) {
         { model: input.model, batchSize: input.batchSize, concurrency: input.concurrency },
         meter.rec,
       );
+      const groups = await groupPages(
+        llm,
+        plan,
+        labels,
+        { model: input.model, concurrency: input.concurrency },
+        meter.rec,
+      );
       return finishMaps({
         plan,
         labels,
-        pages: input.pages,
+        groups,
+        pages,
         pageLinks: linked.links,
         pageAlso: linked.also,
         runId: ctx.runId,

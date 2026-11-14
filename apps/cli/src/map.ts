@@ -32,6 +32,7 @@ import {
 function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   const fake = new FakeProvider([], (req) => {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
+    if (user.includes("\nPages under ")) return JSON.stringify({ groups: [] });
     if (user.includes("\nMap pages:\n")) {
       const existing = JSON.parse(user.split("\nExisting pages:\n")[1] ?? "[]") as {
         p: number;
