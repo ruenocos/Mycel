@@ -19,17 +19,19 @@ import { mergeDuplicates, ruleFor, scoreQueries } from "./rules.ts";
  * software, not Erp the village); it never adds queries or numbers.
  */
 
-export const FILTER_TEMPLATE = { id: "filter-classify", version: "4" } as const;
+export const FILTER_TEMPLATE = { id: "filter-classify", version: "5" } as const;
 
 /**
  * Step logic version (rules + prompt); bump when either changes.
  * 2: no drop on detected language. 3: four relevance tiers (core, outer, bridge, off).
- * 4: the own-brand rule matches whole words, not letters inside a longer word.
+ * 4: the own-brand rule matches whole words.
  * 5: a canonical topic name per query; bare category words are bridge.
  * 6: offerings and entity + sector/size/material/feature with buying intent are core; a
  *    predecessor or competing product keeps its own topic name.
+ * 7: a predecessor of the central entity is outer; the entity's own name as topic; places stay
+ *    in the topic.
  */
-export const FILTER_STEP_VERSION = "6";
+export const FILTER_STEP_VERSION = "7";
 
 export const ClassifyAnswer = z.object({
   results: z.array(
@@ -60,8 +62,8 @@ export function buildClassifyMessages(ctx: ClientContext, batch: string[]) {
     '- "outer": a smaller attribute, feature, problem, cost, how-to or term of the central entity that a future customer searches. It supports the core but is not a direct sale.',
     '- "bridge": a broader category the entity belongs to, a neighbouring product or subject, or a general concept, where the query names neither the central entity nor one of its attributes. The bare word for the wider category on its own is bridge too. Worth a mention on a page, not a page of its own.',
     '- "off": a different meaning of the words, a different subject, jobs, education or courses, a different location, or a navigational search for an unrelated company.',
-    'Example for a business selling electric bikes: "electric bike kopen" is core, "electric bike accu bereik" is outer, "electric bike voor woon-werk" is core, "fiets", "fietsen" or "e-scooter" is bridge, "fietsenmaker vacature" is off.',
-    'Also give each query a "topic": what it is about, in English, 1 to 5 words. Use one canonical name for the same thing every time: every name, abbreviation or spelling of one product or concept gets its official name. A predecessor, successor or competing product is a different product and keeps its own name. Put the attribute asked about after the name ("Electric bike battery range"). A query that only names the thing gets just the name.',
+    'Example for a business selling electric bikes: "electric bike kopen" is core, "electric bike accu bereik" is outer, "electric bike voor woon-werk" is core, "fiets", "fietsen" or "e-scooter" is bridge, an older model or predecessor of the electric bike is outer (its owners are future customers), "fietsenmaker vacature" is off.',
+    'Also give each query a "topic": what it is about, in English, 1 to 5 words. Use one canonical name for the same thing every time: every name, abbreviation or spelling of one product or concept gets its official name. A predecessor, successor or competing product is a different product and keeps its own name. When the query is about a central entity itself, the topic is the name of that entity exactly as in the profile. A query that names a place keeps the place in its topic ("Electric bike repair Utrecht"). Put the attribute asked about after the name ("Electric bike battery range"). A query that only names the thing gets just the name.',
     `A query in another language than ${lang} is off, unless it is a term people in this market search in that form.`,
     "Use the profile's meaning of each central entity. A query that uses the same word in another sense is off. Things listed under notThis are off.",
     "Competitor names are fine when the query compares or chooses between options; a plain search for a competitor's own site or login is off.",
