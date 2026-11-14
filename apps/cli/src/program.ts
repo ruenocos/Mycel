@@ -3,6 +3,7 @@ import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } f
 import { Command, Option } from "commander";
 import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
+import { filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
 import { research } from "./research.ts";
@@ -192,6 +193,55 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       },
     );
 
+  program
+    .command("filter")
+    .description("Step 9: drop noise and score every research query (rules first, then the model)")
+    .argument("<research>", "research.json written by mycel research")
+    .option("--context <file>", "the confirmed context (default: context.json next to research)")
+    .option("--out <file>", "where to write the result (default: queries.json next to research)")
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        researchFile: string,
+        opts: {
+          context?: string;
+          out?: string;
+          provider: string;
+          model: string;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof filterRun>>;
+        try {
+          res = await filterRun({
+            runsDir,
+            researchFile,
+            provider: opts.provider,
+            model: opts.model,
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+
   const gsc = program.command("gsc").description("Google Search Console tools");
   gsc
     .command("check")
@@ -207,9 +257,34 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       if (!res.ok) process.exitCode = 1;
     });
 
-  const writing = program
-    .command("eval")
-    .description("Evaluations")
+  const evals = program.command("eval").description("Evaluations");
+  evals
+    .command("filter")
+    .description("Score the step 9 filter on the labeled queries of the test clients (issue #17)")
+    .argument("[fixtures...]", "fixture folders with filter-eval.json", [
+      "fixtures/clients/plantpost",
+      "fixtures/clients/praktijk-beweegruimte",
+    ])
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (fixtures: string[], opts: { provider: string; model: string; debug?: boolean }) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        const res = await filterEval({
+          runsDir,
+          fixtures,
+          provider: opts.provider,
+          model: opts.model,
+          ...(opts.debug ? { debug: true } : {}),
+        });
+        for (const l of res.lines) out(l);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+  const writing = evals
     .command("writing")
     .description("Dutch writing test: which model writes the text (issue #12)");
   writing

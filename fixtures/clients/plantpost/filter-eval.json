@@ -1,0 +1,155 @@
+{
+  "client": "plantpost",
+  "cases": [
+    {
+      "query": "kamerplanten kopen",
+      "expect": "keep",
+      "why": "core sale"
+    },
+    {
+      "query": "grote kamerplant kopen",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "diervriendelijke kamerplanten",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "hangplanten kopen",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "plantenpot kopen",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "monstera kopen",
+      "expect": "keep",
+      "why": "a houseplant they sell"
+    },
+    {
+      "query": "kamerplant bezorgen",
+      "expect": "keep",
+      "why": "delivery is the business"
+    },
+    {
+      "query": "plant opsturen als cadeau",
+      "expect": "keep",
+      "why": "gift offering"
+    },
+    {
+      "query": "gele bladeren kamerplant",
+      "expect": "keep",
+      "why": "care problem before buying"
+    },
+    {
+      "query": "kamerplant verpotten",
+      "expect": "keep",
+      "why": "care how-to"
+    },
+    {
+      "query": "giftige kamerplanten katten",
+      "expect": "keep",
+      "why": "pet-owner audience"
+    },
+    {
+      "query": "kamerplanten winter",
+      "expect": "keep",
+      "why": "seasonal care"
+    },
+    {
+      "query": "hoe vaak water geven monstera",
+      "expect": "keep",
+      "why": "care how-to"
+    },
+    {
+      "query": "luchtzuiverende planten slaapkamer",
+      "expect": "keep",
+      "why": "offering, informational"
+    },
+    {
+      "query": "kamerplanten weinig licht",
+      "expect": "keep",
+      "why": "choosing a plant"
+    },
+    {
+      "query": "welke kamerplanten zijn giftig voor honden",
+      "expect": "keep",
+      "why": "pet-owner audience"
+    },
+    {
+      "query": "potgrond voor kamerplanten",
+      "expect": "keep",
+      "why": "care supply"
+    },
+    {
+      "query": "kamerplanten voeding",
+      "expect": "keep",
+      "why": "care"
+    },
+    {
+      "query": "tuinplanten kopen",
+      "expect": "drop",
+      "why": "not this: garden plants"
+    },
+    {
+      "query": "kunstplanten",
+      "expect": "drop",
+      "why": "not this: artificial plants"
+    },
+    {
+      "query": "moestuin aanleggen",
+      "expect": "drop",
+      "why": "not this: vegetable garden"
+    },
+    {
+      "query": "snijbloemen bezorgen",
+      "expect": "drop",
+      "why": "not this: cut flowers"
+    },
+    {
+      "query": "cannabis plant binnen kweken",
+      "expect": "drop",
+      "why": "off topic"
+    },
+    {
+      "query": "plant based recepten",
+      "expect": "drop",
+      "why": "different meaning of plant"
+    },
+    {
+      "query": "intratuin openingstijden",
+      "expect": "drop",
+      "why": "navigational, other company"
+    },
+    {
+      "query": "bol.com kamerplanten",
+      "expect": "drop",
+      "why": "navigational to a competitor"
+    },
+    {
+      "query": "vacature hovenier",
+      "expect": "drop",
+      "why": "jobs"
+    },
+    {
+      "query": "opleiding bloemist",
+      "expect": "drop",
+      "why": "education"
+    },
+    {
+      "query": "house plants delivery",
+      "expect": "drop",
+      "why": "other language"
+    },
+    {
+      "query": "plantpost",
+      "expect": "drop",
+      "why": "own brand"
+    }
+  ]
+}

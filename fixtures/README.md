@@ -16,6 +16,8 @@ Each client folder holds:
 - `expectations.json`: the machine half of the phase 2 gate (`GateExpectations`), including
   one planted cannibalisation pair.
 - `checklist.md`: the human half of the gate.
+- `filter-eval.json`: labeled queries for the step 9 filter (`FilterEvalSet`): keep or drop, with
+  a short why. `mycel eval filter` scores the filter on them.
 
 Wons approves these fixtures before the first pipeline run. After approval, the answers in
 `context.json` move from `proposed` to `confirmed`.

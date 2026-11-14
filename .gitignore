@@ -33,4 +33,4 @@ Thumbs.db
 .idea/
 
 # Client profiles made by `mycel context propose` (client data)
-clients/
+/clients/
