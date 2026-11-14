@@ -60,8 +60,17 @@ interface DfsResponse {
     status_code: number;
     status_message: string;
     cost?: number;
+    data?: { tag?: string };
     result?: unknown[] | null;
   }[];
+}
+
+/** Many SERPs at once: what came back, what was off-limits, what failed. */
+export interface SerpBatchResult {
+  serps: Map<string, SerpResult>;
+  /** Not cached, and paid SERP calls are off. */
+  blocked: string[];
+  failed: { keyword: string; error: string }[];
 }
 
 const SERVICE = "dataforseo";
@@ -182,6 +191,164 @@ export class DataforseoClient {
     return parseSerp(keyword, result);
   }
 
+  /**
+   * Many organic SERPs through the standard queue: up to 100 tasks per task_post, then
+   * tasks_ready + task_get for each. Shares the cache with serpOrganic (same request hash), so
+   * cached keywords cost nothing. The budget is checked before every batch post, so a run can
+   * overshoot by at most one batch (100 SERPs, about $0.06).
+   */
+  async serpOrganicBatch(
+    keywords: string[],
+    market: Market,
+    rec: CallRecorder,
+    opts: { depth?: number; device?: "desktop" | "mobile"; chunk?: number } = {},
+  ): Promise<SerpBatchResult> {
+    const endpoint = "serp/google/organic/task_post";
+    const serps = new Map<string, SerpResult>();
+    const blocked: string[] = [];
+    const failed: SerpBatchResult["failed"] = [];
+    type Job = { keyword: string; payload: Record<string, unknown>; hash: string; cost: number };
+    const todo: Job[] = [];
+    for (const keyword of [...new Set(keywords)]) {
+      const payload = {
+        keyword,
+        ...marketParams(market),
+        device: opts.device ?? "desktop",
+        depth: opts.depth ?? 10,
+      };
+      const hash = requestHash(endpoint, payload);
+      const hit = this.cache.get(hash);
+      if (hit) {
+        rec.recordApiCall({
+          service: SERVICE,
+          endpoint,
+          requestHash: hash,
+          cache: "hit",
+          costUsd: 0,
+          latencyMs: 0,
+          status: 200,
+          startedAt: new Date().toISOString(),
+        });
+        serps.set(keyword, parseSerp(keyword, hit.result));
+      } else if (!this.opts.allowLiveSerp) {
+        blocked.push(keyword);
+      } else {
+        todo.push({ keyword, payload, hash, cost: 0 });
+      }
+    }
+    if (blocked.length) {
+      rec.log.warn("SERPs not cached and paid SERP calls are off", { count: blocked.length });
+    }
+
+    const pending = new Map<string, Job>();
+    const chunk = Math.min(opts.chunk ?? 100, 100);
+    for (let i = 0; i < todo.length; i += chunk) {
+      if (this.spent >= this.opts.budgetUsd) {
+        throw new BudgetExceededError(
+          `DataforSEO budget of $${this.opts.budgetUsd} reached ($${this.spentUsd} spent); ${todo.length - i} SERPs not posted`,
+        );
+      }
+      const part = todo.slice(i, i + chunk);
+      const res = await this.request(
+        "POST",
+        endpoint,
+        part.map((j) => ({ ...j.payload, tag: j.hash })),
+        rec,
+        `batch-${part[0]?.hash ?? ""}`,
+        { batch: true },
+      );
+      for (const [n, task] of (res.tasks ?? []).entries()) {
+        const job = part.find((j) => j.hash === task.data?.tag) ?? part[n];
+        if (!job) continue;
+        if (!task.id || task.status_code !== 20100) {
+          failed.push({
+            keyword: job.keyword,
+            error: `${task.status_code} ${task.status_message}`,
+          });
+          continue;
+        }
+        job.cost = task.cost ?? 0;
+        this.spent += job.cost;
+        pending.set(task.id, job);
+      }
+    }
+
+    const collect = async (id: string, job: Job): Promise<void> => {
+      const got = await this.request(
+        "GET",
+        `serp/google/organic/task_get/advanced/${id}`,
+        undefined,
+        rec,
+        job.hash,
+        { allowPending: true },
+      );
+      const task = got.tasks?.[0];
+      if (!task || TASK_PENDING.has(task.status_code)) return; // not ready yet
+      pending.delete(id);
+      if (task.status_code !== 20000) {
+        failed.push({ keyword: job.keyword, error: `${task.status_code} ${task.status_message}` });
+        return;
+      }
+      const result = task.result?.[0] ?? null;
+      this.cache.set(job.hash, {
+        endpoint,
+        payload: job.payload,
+        fetchedAt: new Date().toISOString(),
+        costUsd: job.cost,
+        result,
+      });
+      serps.set(job.keyword, parseSerp(job.keyword, result));
+    };
+    const collectAll = async (ids: string[]) => {
+      for (let i = 0; i < ids.length; i += 8) {
+        await Promise.all(
+          ids.slice(i, i + 8).flatMap((id) => {
+            const job = pending.get(id);
+            return job ? [collect(id, job)] : [];
+          }),
+        );
+      }
+    };
+
+    const interval = this.opts.pollIntervalMs ?? 5_000;
+    const deadline = Date.now() + (this.opts.pollTimeoutMs ?? 30 * 60_000);
+    while (pending.size) {
+      const ready = await this.request(
+        "GET",
+        "serp/google/organic/tasks_ready",
+        undefined,
+        rec,
+        "tasks_ready",
+        { batch: true },
+      );
+      const listed = (ready.tasks ?? [])
+        .flatMap((t) => (Array.isArray(t.result) ? (t.result as { id?: string }[]) : []))
+        .map((r) => r.id)
+        .filter((id): id is string => !!id && pending.has(id));
+      if (listed.length) {
+        await collectAll(listed);
+        continue;
+      }
+      // tasks_ready can lag; check the oldest few directly so nothing waits forever.
+      await collectAll([...pending.keys()].slice(0, 16));
+      if (!pending.size) break;
+      if (Date.now() > deadline) {
+        for (const job of pending.values()) {
+          failed.push({ keyword: job.keyword, error: "task not ready before timeout" });
+        }
+        rec.log.warn("SERP tasks not ready before timeout", { count: pending.size });
+        pending.clear();
+        break;
+      }
+      rec.log.debug("serp batch pending", { pending: pending.size });
+      await this.sleep(interval);
+    }
+    if (failed.length) {
+      rec.log.warn("SERPs failed", { count: failed.length, failed: failed.slice(0, 10) });
+    }
+    return { serps, blocked, failed };
+  }
+
   private async pollTask(endpoint: string, rec: CallRecorder, hash: string): Promise<unknown> {
     const interval = this.opts.pollIntervalMs ?? 5_000;
     const deadline = Date.now() + (this.opts.pollTimeoutMs ?? 10 * 60_000);
@@ -257,7 +424,7 @@ export class DataforseoClient {
     body: unknown,
     rec: CallRecorder,
     hash: string,
-    opts: { allowPending?: boolean } = {},
+    opts: { allowPending?: boolean; batch?: boolean } = {},
   ): Promise<DfsResponse> {
     const maxRetries = this.opts.maxRetries ?? 3;
     for (let attempt = 1; ; attempt++) {
@@ -276,13 +443,20 @@ export class DataforseoClient {
         const task = json.tasks?.[0];
         const code = task?.status_code ?? json.status_code;
         const pending = opts.allowPending && TASK_PENDING.has(code);
-        const ok = json.status_code === 20000 && (code === 20000 || code === 20100 || pending);
+        // A batch call is ok when the request is; each task's own status is checked by the caller.
+        const ok =
+          json.status_code === 20000 && (opts.batch || code === 20000 || code === 20100 || pending);
         rec.recordApiCall({
           service: SERVICE,
           endpoint,
           requestHash: hash,
           cache: "miss",
-          costUsd: method === "POST" ? (task?.cost ?? json.cost ?? 0) : 0,
+          costUsd:
+            method === "POST"
+              ? opts.batch
+                ? (json.cost ?? 0)
+                : (task?.cost ?? json.cost ?? 0)
+              : 0,
           latencyMs: Math.round(performance.now() - t0),
           status: ok ? res.status : "error",
           ...(ok

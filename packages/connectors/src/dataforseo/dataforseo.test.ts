@@ -288,6 +288,108 @@ describe("DataforseoClient", () => {
     });
   });
 
+  it("fetches many SERPs in one batch: cache hits are free, the rest go through tasks_ready", async () => {
+    const { rec } = recorder();
+    // Seed the cache with one SERP via the single-SERP path.
+    const single = [ok(null, 0.0006), ok(serpFixture, 0)];
+    await client(async () => single.shift() as Response, { allowLiveSerp: true }).serpOrganic(
+      "kamerplant",
+      market,
+      rec,
+    );
+
+    const posted: unknown[] = [];
+    const c = client(
+      async (url, init) => {
+        const u = String(url);
+        if (u.endsWith("/task_post")) {
+          const body = JSON.parse(String(init?.body)) as { keyword: string; tag: string }[];
+          posted.push(...body.map((b) => b.keyword));
+          return new Response(
+            JSON.stringify({
+              status_code: 20000,
+              status_message: "Ok.",
+              cost: 0.0012,
+              tasks: body.map((b, i) =>
+                b.keyword === "kapot"
+                  ? { status_code: 40501, status_message: "Invalid Field.", data: { tag: b.tag } }
+                  : {
+                      id: `id${i}`,
+                      status_code: 20100,
+                      status_message: "Task Created.",
+                      cost: 0.0006,
+                      data: { tag: b.tag },
+                    },
+              ),
+            }),
+          );
+        }
+        if (u.endsWith("/tasks_ready")) {
+          return new Response(
+            JSON.stringify({
+              status_code: 20000,
+              status_message: "Ok.",
+              tasks: [
+                {
+                  status_code: 20000,
+                  status_message: "Ok.",
+                  result: [{ id: "id0" }, { id: "other-run" }],
+                },
+              ],
+            }),
+          );
+        }
+        if (u.endsWith("/task_get/advanced/id0")) return ok(serpFixture, 0);
+        if (u.endsWith("/task_get/advanced/id2")) return ok(serpFixture, 0);
+        throw new Error(`unexpected ${u}`);
+      },
+      { allowLiveSerp: true },
+    );
+    const res = await c.serpOrganicBatch(
+      ["kamerplant", "monstera", "kapot", "pothos"],
+      market,
+      rec,
+    );
+    expect(posted).toEqual(["monstera", "kapot", "pothos"]);
+    expect([...res.serps.keys()].sort()).toEqual(["kamerplant", "monstera", "pothos"]);
+    expect(res.failed).toEqual([{ keyword: "kapot", error: "40501 Invalid Field." }]);
+    expect(res.blocked).toEqual([]);
+    expect(c.spentUsd).toBe(0.0012);
+
+    // Second time everything that worked is cached; with paid SERPs off the rest is blocked.
+    const off = client(async () => {
+      throw new Error("no network expected");
+    });
+    const again = await off.serpOrganicBatch(["monstera", "pothos", "nieuw"], market, rec);
+    expect(again.serps.size).toBe(2);
+    expect(again.blocked).toEqual(["nieuw"]);
+  });
+
+  it("stops posting batches at the budget", async () => {
+    const c = client(
+      async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as { tag: string }[];
+        return new Response(
+          JSON.stringify({
+            status_code: 20000,
+            status_message: "Ok.",
+            tasks: body.map((b, i) => ({
+              id: `t${i}`,
+              status_code: 20100,
+              status_message: "Created",
+              cost: 0.5,
+              data: { tag: b.tag },
+            })),
+          }),
+        );
+      },
+      { allowLiveSerp: true, budgetUsd: 0.4 },
+    );
+    await expect(
+      c.serpOrganicBatch(["a", "b", "c"], market, recorder().rec, { chunk: 1 }),
+    ).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
   it("retries 5xx and logs every attempt", async () => {
     const responses = [new Response("busy", { status: 503 }), ok({ items: [] })];
     const c = client(async () => responses.shift() as Response);

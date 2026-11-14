@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
 import { filterEval, filterRun } from "./filter.ts";
@@ -225,6 +226,58 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             researchFile,
             provider: opts.provider,
             model: opts.model,
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command("cluster")
+    .description(
+      "Step 10: cluster kept queries on shared top-10 results and decide page / section / micro",
+    )
+    .argument("<queries>", "queries.json written by mycel filter")
+    .option("--context <file>", "the confirmed context (default: context.json next to queries)")
+    .option("--out <file>", "where to write clusters (default: clusters.json next to queries)")
+    .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
+    .option("--budget <usd>", "DataforSEO budget for this run", "3")
+    .option("--min-shared <n>", "shared top-10 URLs for one page (ADR 0003)", "3")
+    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        queriesFile: string,
+        opts: {
+          context?: string;
+          out?: string;
+          liveSerp?: boolean;
+          budget: string;
+          minShared: string;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof clusterRun>>;
+        try {
+          res = await clusterRun({
+            runsDir,
+            queriesFile,
+            liveSerp: !!opts.liveSerp,
+            budgetUsd: Number(opts.budget),
+            minShared: Number(opts.minShared),
             allowUnconfirmed: !!opts.allowUnconfirmed,
             ...(opts.context ? { contextFile: opts.context } : {}),
             ...(opts.out ? { out: opts.out } : {}),
