@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  DataforseoClient,
   FakeProvider,
   GscClient,
   LlmClient,
@@ -22,6 +21,7 @@ import {
   runStep,
 } from "@mycel/core";
 import { ClientContext, type ResearchDataset, SitePages } from "@mycel/schema";
+import { costLine, dataforseoFromEnv, runBudget } from "./dataforseo.ts";
 
 /**
  * `mycel research <context.json>` (issue #16, Koray steps 7-8). Thin shell: reads pages and GSC,
@@ -104,6 +104,7 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
   const env = opts.env ?? process.env;
   const cacheDir = opts.cacheDir ?? ".cache";
   const lines: string[] = [];
+  const budgetUsd = runBudget(opts.budgetUsd, 1);
   if (!existsSync(opts.contextFile)) {
     throw new Error(`no context at ${opts.contextFile}; run mycel context propose first`);
   }
@@ -125,22 +126,13 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       model: opts.noModel ? null : opts.model,
       provider: opts.provider,
       liveSerp: !!opts.liveSerp,
-      budgetUsd: opts.budgetUsd ?? 1,
+      budgetUsd,
     },
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
   if (!context.confirmed) lines.push("note        context is not confirmed: dry run");
 
-  const dfs =
-    env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD
-      ? new DataforseoClient({
-          login: env.DATAFORSEO_LOGIN,
-          password: env.DATAFORSEO_PASSWORD,
-          cacheDir: join(cacheDir, "dataforseo"),
-          budgetUsd: opts.budgetUsd ?? 1,
-          allowLiveSerp: !!opts.liveSerp,
-        })
-      : undefined;
+  const dfs = dataforseoFromEnv(env, { cacheDir, budgetUsd, allowLiveSerp: !!opts.liveSerp });
   const port: ResearchPort | undefined = opts.port ?? dfs;
 
   let out: string | undefined;
@@ -235,10 +227,7 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify(dataset, null, 2)}\n`);
     lines.push(...summarize(dataset));
-    if (dfs)
-      lines.push(
-        `cost        $${dfs.spentUsd.toFixed(4)} DataforSEO (budget $${opts.budgetUsd ?? 1})`,
-      );
+    if (dfs) lines.push(costLine(dfs, budgetUsd, env));
     lines.push(`dataset     ${out}`);
   } catch (err) {
     failure = err;

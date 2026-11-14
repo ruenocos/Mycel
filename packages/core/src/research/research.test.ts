@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClientContext, type Market } from "@mycel/schema";
+import { ClientContext, type Market, ResearchDataset } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
 import type { JsonModel } from "../context/llm.ts";
 import { RunStore } from "../log/run-store.ts";
@@ -58,6 +58,28 @@ describe("brand detection", () => {
     expect(brandTokens(consultancy)).toEqual(["acmeerp"]);
     expect(isBrandQuery("acme erp ervaringen", brandTokens(consultancy))).toBe(true);
     expect(isBrandQuery("erp implementatie", brandTokens(consultancy))).toBe(false);
+  });
+
+  it("matches a brand as whole words only, however it is spaced or accented", () => {
+    const saak = brandTokens({ site: { url: "https://www.desaak.example", name: "De Saak" } });
+    expect(saak).toEqual(["desaak"]);
+    for (const q of ["de saak erp", "desaak", "DeSaak ervaringen", "desaak.example", "de-saak"]) {
+      expect(isBrandQuery(q, saak), q).toBe(true);
+    }
+    // The brand's letters inside other words are not the brand.
+    expect(isBrandQuery("wat is de saakkundige", saak)).toBe(false);
+
+    const rug = brandTokens({ site: { url: "https://rug.example", name: "Rug" } });
+    expect(isBrandQuery("rug fysio utrecht", rug)).toBe(true);
+    expect(isBrandQuery("rugpijn oefeningen", rug)).toBe(false);
+    expect(isBrandQuery("onderrug pijn", rug)).toBe(false);
+
+    const cafe = brandTokens({ site: { url: "https://cafe-noir.example", name: "Café Noir" } });
+    expect(cafe).toEqual(["cafenoir"]);
+    expect(isBrandQuery("cafe noir openingstijden", cafe)).toBe(true);
+    // Competitor brands come straight from a domain label, hyphen and all.
+    expect(isBrandQuery("acme erp prijs", ["acme-erp"])).toBe(true);
+    expect(isBrandQuery("erp prijs", [])).toBe(false);
   });
 });
 
@@ -319,6 +341,29 @@ describe("researchStep", () => {
     expect(port.calls).not.toContain("ranked:youtube.com");
     expect(d.warnings.join(" ")).toContain("1 of 3 seed SERPs were skipped");
     expect(d.coverage.find((c) => c.source === "serp")?.note).toContain("1 skipped");
+  });
+
+  it("keeps how far each SERP URL can be trusted (ADR 0010)", async () => {
+    const trusted = serp("erp", ["niche.nl", "rival.nl"], { unresolvedUrls: 1 });
+    const [first, second] = trusted.organic;
+    if (first) first.urlSource = "url";
+    if (second) Object.assign(second, { urlSource: "domain", url: null, key: "rival.nl" });
+    const d = await runStep(newRun(), researchStep(stubPort({ erp: trusted })), {
+      context: consultancy,
+      seeds: seeds.slice(0, 1),
+    });
+    expect(d.serps[0]?.organic.map((o) => o.urlSource)).toEqual(["url", "domain"]);
+    expect(d.serps[0]?.unresolvedUrls).toBe(1);
+    expect(d.coverage.find((c) => c.source === "serp")?.note).toBe(
+      "1 of 2 results known by domain only",
+    );
+    // A dataset saved before the field existed still reads.
+    const old = structuredClone(d);
+    for (const s of old.serps) {
+      delete s.unresolvedUrls;
+      for (const o of s.organic) delete o.urlSource;
+    }
+    expect(ResearchDataset.parse(old).serps[0]?.organic[0]?.urlSource).toBeUndefined();
   });
 
   it("asks nothing about test domains and warns when GSC is missing", async () => {

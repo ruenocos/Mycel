@@ -19,6 +19,9 @@ Each client folder holds:
 - `checklist.md`: the human half of the gate.
 - `filter-eval.json`: labeled queries for the step 9 filter (`FilterEvalSet`): keep or drop, with
   a short why. `mycel eval filter` scores the filter on them.
+- `filter-holdout.json`: a second labeled set with fresh queries, scored by `mycel eval filter` and
+  never tuned on. Every client the filter is tuned on has one. A blind test client has none: its
+  `filter-eval.json` is never tuned on either.
 
 Wons approves these fixtures before the first pipeline run. After approval, the answers in
 `context.json` move from `proposed` to `confirmed`.

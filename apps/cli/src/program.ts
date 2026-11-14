@@ -4,7 +4,7 @@ import { Command, Option } from "commander";
 import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
-import { filterEval, filterRun } from "./filter.ts";
+import { DEFAULT_MIN_ACCURACY, filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
 import { research } from "./research.ts";
@@ -76,6 +76,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .option("--no-gsc", "don't use Search Console")
     .option("--no-dataforseo", "don't use DataforSEO")
     .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
+    .option(
+      "--force",
+      "replace a context that was already confirmed or reviewed (a backup is kept next to it)",
+    )
     .option("--debug", "mirror logs to the console")
     .action(
       async (
@@ -88,22 +92,32 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           gsc: boolean;
           dataforseo: boolean;
           budget: string;
+          force?: boolean;
           debug?: boolean;
         },
       ) => {
         const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        const res = await contextPropose({
-          runsDir,
-          site,
-          provider: opts.provider,
-          model: opts.model,
-          gsc: opts.gsc,
-          dataforseo: opts.dataforseo,
-          budgetUsd: Number(opts.budget),
-          ...(opts.market ? { market: opts.market } : {}),
-          ...(opts.out ? { out: opts.out } : {}),
-          ...(opts.debug ? { debug: true } : {}),
-        });
+        let res: Awaited<ReturnType<typeof contextPropose>>;
+        try {
+          res = await contextPropose({
+            runsDir,
+            site,
+            provider: opts.provider,
+            model: opts.model,
+            gsc: opts.gsc,
+            dataforseo: opts.dataforseo,
+            budgetUsd: Number(opts.budget),
+            ...(opts.market ? { market: opts.market } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.force ? { force: true } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          // Raised before a run exists (a bad --budget, a confirmed context in the way).
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
         for (const l of res.lines) out(l);
         out("");
         out(res.timeline);
@@ -313,8 +327,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
   const evals = program.command("eval").description("Evaluations");
   evals
     .command("filter")
-    .description("Score the step 9 filter on the labeled queries of the test clients (issue #17)")
-    .argument("[fixtures...]", "fixture folders with filter-eval.json", [
+    .description(
+      "Score the step 9 filter on the labeled queries of the test clients: the tuning set and the held-out set (issue #17). Fails below the pass mark",
+    )
+    .argument("[fixtures...]", "fixture folders with filter-eval.json and filter-holdout.json", [
       "fixtures/clients/plantpost",
       "fixtures/clients/praktijk-beweegruimte",
     ])
@@ -322,17 +338,33 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
     )
     .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option(
+      "--min-accuracy <share>",
+      "share of labeled queries each set must get right, 0 to 1",
+      String(DEFAULT_MIN_ACCURACY),
+    )
     .option("--debug", "mirror logs to the console")
     .action(
-      async (fixtures: string[], opts: { provider: string; model: string; debug?: boolean }) => {
+      async (
+        fixtures: string[],
+        opts: { provider: string; model: string; minAccuracy: string; debug?: boolean },
+      ) => {
         const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        const res = await filterEval({
-          runsDir,
-          fixtures,
-          provider: opts.provider,
-          model: opts.model,
-          ...(opts.debug ? { debug: true } : {}),
-        });
+        let res: Awaited<ReturnType<typeof filterEval>>;
+        try {
+          res = await filterEval({
+            runsDir,
+            fixtures,
+            provider: opts.provider,
+            model: opts.model,
+            minAccuracy: Number(opts.minAccuracy),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
         for (const l of res.lines) out(l);
         if (!res.ok) process.exitCode = 1;
       },

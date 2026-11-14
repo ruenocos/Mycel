@@ -152,6 +152,57 @@ describe("LlmClient", () => {
     ).rejects.toBeInstanceOf(LlmOutputError);
   });
 
+  it("counts an empty answer as failed: recorded as an error, retried, never returned", async () => {
+    const llm = new LlmClient({
+      providers: [new FakeProvider(["", "  \n", "Een echte alinea."])],
+      defaultProvider: "fake",
+    });
+    const { rec, calls } = recorder();
+    expect((await llm.generate(req, rec)).content).toBe("Een echte alinea.");
+    expect(calls.map((c) => [c.attempt, c.status])).toEqual([
+      [1, "error"],
+      [2, "error"],
+      [3, "ok"],
+    ]);
+    expect(calls[0]?.error).toEqual({
+      name: "LlmOutputError",
+      message: "empty answer (done_reason: stop)",
+    });
+
+    const silent = new LlmClient({
+      providers: [new FakeProvider([], "")],
+      defaultProvider: "fake",
+    });
+    await expect(silent.generate(req, recorder().rec, { maxAttempts: 2 })).rejects.toThrow(
+      "no valid output after 2 attempts: empty answer",
+    );
+    await expect(
+      silent.generateJson(req, z.object({ ok: z.boolean() }), recorder().rec),
+    ).rejects.toThrow("empty answer");
+  });
+
+  it("counts an answer cut off at the token limit as failed", async () => {
+    const replies = [
+      ollamaReply('{"ok":tr', { done_reason: "length" }),
+      ollamaReply("Een halve zin die midden in", { done_reason: "length" }),
+      ollamaReply("Een hele zin."),
+    ];
+    const ollama = new OllamaProvider({
+      host: "https://ollama.com",
+      fetchImpl: async () => replies.shift() as Response,
+    });
+    Object.assign(ollama, { modelDigest: undefined });
+    const llm = new LlmClient({ providers: [ollama], defaultProvider: "ollama" });
+    const { rec, calls } = recorder();
+    expect((await llm.generate(req, rec)).content).toBe("Een hele zin.");
+    expect(calls.map((c) => c.status)).toEqual(["error", "error", "ok"]);
+    expect(calls[1]?.error?.message).toBe(
+      "answer cut off at the token limit (done_reason: length)",
+    );
+    // The cut-off text is still saved with the failed call, for troubleshooting (ADR 0009).
+    expect(JSON.stringify(calls[1]?.response)).toContain("Een halve zin");
+  });
+
   it("retries transport errors (5xx) and records the failed attempt with the response body", async () => {
     const replies = [
       new Response(JSON.stringify({ error: "overloaded" }), { status: 503 }),

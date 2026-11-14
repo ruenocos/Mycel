@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 /** JSON with sorted keys, so equal requests always hash the same. */
@@ -46,5 +53,18 @@ export class FileCache {
     mkdirSync(join(this.dir, hash.slice(0, 2)), { recursive: true });
     writeFileSync(`${p}.tmp`, JSON.stringify(entry));
     renameSync(`${p}.tmp`, p);
+  }
+
+  /** Every stored response (used once a month to seed the spend ledger). */
+  *entries(): Generator<CacheEntry & { hash: string }> {
+    if (!existsSync(this.dir)) return;
+    for (const shard of readdirSync(this.dir, { withFileTypes: true })) {
+      if (!shard.isDirectory() || shard.name.length !== 2) continue;
+      for (const file of readdirSync(join(this.dir, shard.name))) {
+        if (!file.endsWith(".json")) continue;
+        const entry = JSON.parse(readFileSync(join(this.dir, shard.name, file), "utf8"));
+        yield { ...(entry as CacheEntry), hash: file.slice(0, -5) };
+      }
+    }
   }
 }

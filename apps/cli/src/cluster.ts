@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DataforseoClient } from "@mycel/connectors";
 import {
   CORE_VERSION,
   clusterStep,
@@ -10,6 +9,7 @@ import {
   type SerpBatchPort,
 } from "@mycel/core";
 import { ClientContext, type ClusterSet, FilteredQueries } from "@mycel/schema";
+import { costLine, dataforseoFromEnv, runBudget } from "./dataforseo.ts";
 
 /**
  * `mycel cluster <queries.json>` (issue #18, Koray step 10). Thin shell: fetches a SERP per kept
@@ -72,10 +72,7 @@ export interface ClusterResult {
 
 export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult> {
   const env = opts.env ?? process.env;
-  const budgetUsd = opts.budgetUsd ?? 3;
-  if (!Number.isFinite(budgetUsd) || budgetUsd <= 0) {
-    throw new Error(`--budget must be a positive number of dollars, got ${opts.budgetUsd}`);
-  }
+  const budgetUsd = runBudget(opts.budgetUsd, 3);
   if (opts.minShared !== undefined && !(Number.isInteger(opts.minShared) && opts.minShared > 0)) {
     throw new Error(`--min-shared must be a positive whole number, got ${opts.minShared}`);
   }
@@ -87,16 +84,11 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
       `${contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
     );
   }
-  const dfs =
-    env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD
-      ? new DataforseoClient({
-          login: env.DATAFORSEO_LOGIN,
-          password: env.DATAFORSEO_PASSWORD,
-          cacheDir: join(opts.cacheDir ?? ".cache", "dataforseo"),
-          budgetUsd,
-          allowLiveSerp: !!opts.liveSerp,
-        })
-      : undefined;
+  const dfs = dataforseoFromEnv(env, {
+    cacheDir: opts.cacheDir ?? ".cache",
+    budgetUsd,
+    allowLiveSerp: !!opts.liveSerp,
+  });
   const port = opts.port ?? dfs;
   const run = RunStore.create({
     runsDir: opts.runsDir,
@@ -127,8 +119,7 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
     lines.push(...summarizeClusters(result));
-    if (dfs)
-      lines.push(`cost        $${dfs.spentUsd.toFixed(4)} DataforSEO (budget $${budgetUsd})`);
+    if (dfs) lines.push(costLine(dfs, budgetUsd, env));
     lines.push(`clusters    ${out}`);
   } catch (err) {
     failure = err;

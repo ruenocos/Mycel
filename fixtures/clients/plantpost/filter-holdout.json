@@ -1,0 +1,160 @@
+{
+  "client": "plantpost",
+  "cases": [
+    {
+      "query": "kamerplanten online bestellen",
+      "expect": "keep",
+      "why": "core sale"
+    },
+    {
+      "query": "calathea kopen",
+      "expect": "keep",
+      "why": "a houseplant they sell"
+    },
+    {
+      "query": "grote kamerplanten weinig licht",
+      "expect": "keep",
+      "why": "core offering, choosing"
+    },
+    {
+      "query": "hangplant binnen",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "luchtzuiverende kamerplanten",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "plantenpot 30 cm",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "plant cadeau versturen",
+      "expect": "keep",
+      "why": "gift offering"
+    },
+    {
+      "query": "kamerplant cadeau verjaardag",
+      "expect": "keep",
+      "why": "gift audience"
+    },
+    {
+      "query": "niet giftige planten voor katten",
+      "expect": "keep",
+      "why": "pet-owner audience"
+    },
+    {
+      "query": "sanseveria verzorging",
+      "expect": "keep",
+      "why": "care how-to"
+    },
+    {
+      "query": "bruine punten bladeren kamerplant",
+      "expect": "keep",
+      "why": "care problem"
+    },
+    {
+      "query": "kamerplant te veel water",
+      "expect": "keep",
+      "why": "care problem"
+    },
+    {
+      "query": "fruitvliegjes in kamerplanten",
+      "expect": "keep",
+      "why": "care problem"
+    },
+    {
+      "query": "pilea stekken",
+      "expect": "keep",
+      "why": "care how-to"
+    },
+    {
+      "query": "kamerplanten verzorgen",
+      "expect": "keep",
+      "why": "care"
+    },
+    {
+      "query": "makkelijke kamerplanten",
+      "expect": "keep",
+      "why": "choosing a plant"
+    },
+    {
+      "query": "ficus bladeren vallen uit",
+      "expect": "keep",
+      "why": "care problem"
+    },
+    {
+      "query": "kamerplant verpotten welke maat pot",
+      "expect": "keep",
+      "why": "care how-to, pots"
+    },
+    {
+      "query": "tuinplanten online bestellen",
+      "expect": "drop",
+      "why": "not this: garden plants"
+    },
+    {
+      "query": "buitenplanten winterhard",
+      "expect": "drop",
+      "why": "garden plants"
+    },
+    {
+      "query": "kunstplant groot",
+      "expect": "drop",
+      "why": "not this: artificial plants"
+    },
+    {
+      "query": "moestuinplanten kopen",
+      "expect": "drop",
+      "why": "not this: vegetable garden"
+    },
+    {
+      "query": "bos bloemen bezorgen",
+      "expect": "drop",
+      "why": "not this: cut flowers"
+    },
+    {
+      "query": "gazon bemesten",
+      "expect": "drop",
+      "why": "garden, not houseplants"
+    },
+    {
+      "query": "plantaardige melk",
+      "expect": "drop",
+      "why": "different meaning of plant"
+    },
+    {
+      "query": "hennepplant kweken",
+      "expect": "drop",
+      "why": "off topic"
+    },
+    {
+      "query": "plantkunde studeren",
+      "expect": "drop",
+      "why": "education"
+    },
+    {
+      "query": "vacature bloemenwinkel",
+      "expect": "drop",
+      "why": "jobs"
+    },
+    {
+      "query": "ikea openingstijden",
+      "expect": "drop",
+      "why": "navigational, other company"
+    },
+    {
+      "query": "indoor plants care tips",
+      "expect": "drop",
+      "why": "other language"
+    },
+    {
+      "query": "plantpost kortingscode",
+      "expect": "drop",
+      "why": "own brand"
+    }
+  ]
+}

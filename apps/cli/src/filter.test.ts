@@ -53,16 +53,37 @@ describe("mycel filter", () => {
 });
 
 describe("mycel eval filter", () => {
-  it("scores both test clients (fake model keeps everything the rules let through)", async () => {
-    const res = await filterEval({
+  const run = (minAccuracy?: number) =>
+    filterEval({
       runsDir: join(tmp(), "runs"),
       fixtures: [fixture("plantpost"), fixture("praktijk-beweegruimte")],
       provider: "fake",
       model: "m",
       env: {},
+      ...(minAccuracy !== undefined ? { minAccuracy } : {}),
     });
+
+  it("scores the tuning and the held-out set of both test clients", async () => {
+    // The fake model keeps everything the rules let through, so only recall is perfect.
+    const res = await run(0);
     expect(res.ok).toBe(true);
-    expect(res.scores.map((s) => s.client)).toEqual(["plantpost", "praktijk-beweegruimte"]);
-    expect(res.scores[0]?.recall).toBe(1);
+    expect(res.scores.map((s) => [s.client, s.set])).toEqual([
+      ["plantpost", "tuning"],
+      ["plantpost", "held-out"],
+      ["praktijk-beweegruimte", "tuning"],
+      ["praktijk-beweegruimte", "held-out"],
+    ]);
+    expect(res.scores.every((s) => s.recall === 1 && s.passed)).toBe(true);
+  });
+
+  it("fails below the pass mark instead of passing at any score", async () => {
+    const res = await run();
+    expect(res.ok).toBe(false);
+    expect(res.scores.every((s) => s.accuracy < 0.9 && !s.passed)).toBe(true);
+    const text = res.lines.join("\n");
+    expect(text).toContain("held-out FAIL  accuracy");
+    expect(text).toContain("(needs 0.9)");
+    expect(text).toContain("never fit them to the held-out misses");
+    await expect(run(Number("high"))).rejects.toThrow("--min-accuracy must be between 0 and 1");
   });
 });
