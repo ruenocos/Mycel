@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClientContext, type Market } from "@mycel/schema";
+import { ClientContext, type Market, ResearchDataset } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
 import type { JsonModel } from "../context/llm.ts";
 import { RunStore } from "../log/run-store.ts";
@@ -319,6 +319,29 @@ describe("researchStep", () => {
     expect(port.calls).not.toContain("ranked:youtube.com");
     expect(d.warnings.join(" ")).toContain("1 of 3 seed SERPs were skipped");
     expect(d.coverage.find((c) => c.source === "serp")?.note).toContain("1 skipped");
+  });
+
+  it("keeps how far each SERP URL can be trusted (ADR 0010)", async () => {
+    const trusted = serp("erp", ["niche.nl", "rival.nl"], { unresolvedUrls: 1 });
+    const [first, second] = trusted.organic;
+    if (first) first.urlSource = "url";
+    if (second) Object.assign(second, { urlSource: "domain", url: null, key: "rival.nl" });
+    const d = await runStep(newRun(), researchStep(stubPort({ erp: trusted })), {
+      context: consultancy,
+      seeds: seeds.slice(0, 1),
+    });
+    expect(d.serps[0]?.organic.map((o) => o.urlSource)).toEqual(["url", "domain"]);
+    expect(d.serps[0]?.unresolvedUrls).toBe(1);
+    expect(d.coverage.find((c) => c.source === "serp")?.note).toBe(
+      "1 of 2 results known by domain only",
+    );
+    // A dataset saved before the field existed still reads.
+    const old = structuredClone(d);
+    for (const s of old.serps) {
+      delete s.unresolvedUrls;
+      for (const o of s.organic) delete o.urlSource;
+    }
+    expect(ResearchDataset.parse(old).serps[0]?.organic[0]?.urlSource).toBeUndefined();
   });
 
   it("asks nothing about test domains and warns when GSC is missing", async () => {

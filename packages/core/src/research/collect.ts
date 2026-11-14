@@ -43,12 +43,15 @@ export interface SerpLike {
     rank: number;
     title: string;
     key: string;
+    /** How far `key` can be trusted (ADR 0010). */
+    urlSource?: "url" | "breadcrumb" | "domain";
     url: string | null;
     domain: string | null;
   }[];
   aiOverview: { present: boolean; references: { url: string; domain: string | null }[] };
   peopleAlsoAsk: string[];
   relatedSearches: string[];
+  unresolvedUrls?: number;
 }
 // biome-ignore lint/suspicious/noExplicitAny: the recorder shape belongs to connectors; core passes its StepContext
 type Rec = any;
@@ -374,8 +377,16 @@ export function researchStep(port: ResearchPort) {
             rel++;
           }
         }
-        const note = blocked ? `${blocked} skipped: not cached, live SERPs off` : undefined;
-        report("serp", seeds.length - blocked, serps.length, note);
+        // Results known by domain only can't prove two queries share a page (ADR 0010).
+        const organic = serps.flatMap((s) => s.organic);
+        const domainOnly = organic.filter((o) => o.urlSource === "domain").length;
+        const notes = [
+          ...(blocked ? [`${blocked} skipped: not cached, live SERPs off`] : []),
+          ...(domainOnly
+            ? [`${domainOnly} of ${organic.length} results known by domain only`]
+            : []),
+        ];
+        report("serp", seeds.length - blocked, serps.length, notes.join("; ") || undefined);
         report("serp_paa", 0, paa);
         report("serp_related", 0, rel);
         if (blocked) {
@@ -449,6 +460,7 @@ export function researchStep(port: ResearchPort) {
             organic: s.organic.map((o) => ({
               rank: o.rank,
               key: o.key,
+              ...(o.urlSource ? { urlSource: o.urlSource } : {}),
               url: o.url,
               domain: o.domain ? cleanDomain(o.domain) : null,
               title: o.title,
@@ -459,6 +471,7 @@ export function researchStep(port: ResearchPort) {
             },
             peopleAlsoAsk: s.peopleAlsoAsk,
             relatedSearches: s.relatedSearches,
+            ...(s.unresolvedUrls !== undefined ? { unresolvedUrls: s.unresolvedUrls } : {}),
           }),
         ),
         competitors,
