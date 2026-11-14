@@ -59,6 +59,28 @@ describe("brand detection", () => {
     expect(isBrandQuery("acme erp ervaringen", brandTokens(consultancy))).toBe(true);
     expect(isBrandQuery("erp implementatie", brandTokens(consultancy))).toBe(false);
   });
+
+  it("matches a brand as whole words only, however it is spaced or accented", () => {
+    const saak = brandTokens({ site: { url: "https://www.desaak.example", name: "De Saak" } });
+    expect(saak).toEqual(["desaak"]);
+    for (const q of ["de saak erp", "desaak", "DeSaak ervaringen", "desaak.example", "de-saak"]) {
+      expect(isBrandQuery(q, saak), q).toBe(true);
+    }
+    // The brand's letters inside other words are not the brand.
+    expect(isBrandQuery("wat is de saakkundige", saak)).toBe(false);
+
+    const rug = brandTokens({ site: { url: "https://rug.example", name: "Rug" } });
+    expect(isBrandQuery("rug fysio utrecht", rug)).toBe(true);
+    expect(isBrandQuery("rugpijn oefeningen", rug)).toBe(false);
+    expect(isBrandQuery("onderrug pijn", rug)).toBe(false);
+
+    const cafe = brandTokens({ site: { url: "https://cafe-noir.example", name: "Café Noir" } });
+    expect(cafe).toEqual(["cafenoir"]);
+    expect(isBrandQuery("cafe noir openingstijden", cafe)).toBe(true);
+    // Competitor brands come straight from a domain label, hyphen and all.
+    expect(isBrandQuery("acme erp prijs", ["acme-erp"])).toBe(true);
+    expect(isBrandQuery("erp prijs", [])).toBe(false);
+  });
 });
 
 describe("deterministicSeeds", () => {

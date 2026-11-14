@@ -17,17 +17,40 @@ const MAX_SEED_WORDS = 5;
 
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
+/** Lowercase, accents folded, split on anything that isn't a letter or a digit. */
+const brandWords = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+const flatBrand = (s: string) => brandWords(s).join("");
+
 /** Brand tokens from the site name and host, spaces removed: "De Saak" + desaak.com → ["desaak"]. */
 export function brandTokens(ctx: Pick<ClientContext, "site">): string[] {
   const host = new URL(ctx.site.url).hostname.replace(/^www\./, "");
-  const flat = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  const label = flat(host.split(".")[0] ?? "");
-  return [...new Set([label, flat(ctx.site.name)].filter((t) => t.length >= 3))];
+  const label = flatBrand(host.split(".")[0] ?? "");
+  return [...new Set([label, flatBrand(ctx.site.name)].filter((t) => t.length >= 3))];
 }
 
+/**
+ * True when the query names a brand as whole words: one word, or neighbouring words that spell
+ * it together ("de saak erp" and "desaak.com" both name "desaak"). A brand that merely sits
+ * inside a longer word is not a match: a practice called Rug must not lose "rugpijn oefeningen".
+ */
 export function isBrandQuery(query: string, brands: string[]): boolean {
-  const flat = query.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  return brands.some((b) => flat.includes(b));
+  const wanted = new Set(brands.map(flatBrand).filter(Boolean));
+  if (!wanted.size) return false;
+  const w = brandWords(query);
+  for (let i = 0; i < w.length; i++) {
+    let run = "";
+    for (let j = i; j < w.length; j++) {
+      run += w[j];
+      if (wanted.has(run)) return true;
+    }
+  }
+  return false;
 }
 
 export interface SeedData {

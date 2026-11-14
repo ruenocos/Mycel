@@ -24,8 +24,9 @@ export const FILTER_TEMPLATE = { id: "filter-classify", version: "2" } as const;
 /**
  * Step logic version (rules + prompt); bump when either changes.
  * 2: no drop on detected language. 3: four relevance tiers (core, outer, bridge, off).
+ * 4: the own-brand rule matches whole words, not letters inside a longer word.
  */
-export const FILTER_STEP_VERSION = "3";
+export const FILTER_STEP_VERSION = "4";
 
 export const ClassifyAnswer = z.object({
   results: z.array(
