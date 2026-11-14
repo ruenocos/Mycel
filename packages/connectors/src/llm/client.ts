@@ -56,6 +56,20 @@ const errorInfo = (err: unknown) => ({
 });
 
 /**
+ * Why an answer can't be used at all, whatever was asked for. A model that returns nothing (a
+ * thinking model that spent its whole token budget thinking, a provider hiccup) or stops at the
+ * token limit still answers HTTP 200; without this check that counted as a good call.
+ */
+function unusable(response: ChatResponse): string | null {
+  const reason = response.timings.done_reason;
+  if (!response.content.trim()) {
+    return `empty answer${reason ? ` (done_reason: ${reason})` : ""}`;
+  }
+  if (reason === "length") return "answer cut off at the token limit (done_reason: length)";
+  return null;
+}
+
+/**
  * The provider switch (ADR 0005). Every call, including failed attempts, is recorded with
  * the exact model, digest, params, prompt template, full request and response (ADR 0009).
  */
@@ -114,13 +128,39 @@ export class LlmClient {
     return Math.round(usd * 1e6) / 1e6;
   }
 
-  /** One chat call with transport retries. Returns the response; each attempt is recorded. */
+  /**
+   * Free-text output. An empty answer, or one cut off at the token limit, is recorded as a
+   * failed attempt and retried; after maxAttempts it throws. Each attempt is recorded.
+   */
   async generate(
     req: ChatRequest,
     rec: LlmRecorder,
-    opts: GenerateOptions = {},
+    opts: GenerateOptions & { maxAttempts?: number } = {},
   ): Promise<ChatResponse> {
-    return this.call(req, rec, opts, 1).then((r) => r.response);
+    return this.usable(req, rec, opts);
+  }
+
+  /** Calls until an answer passes `unusable` and `validate`, or the attempts run out. */
+  private async usable(
+    req: ChatRequest,
+    rec: LlmRecorder,
+    opts: GenerateOptions & { maxAttempts?: number },
+    validate?: (content: string) => string | null,
+  ): Promise<ChatResponse> {
+    const maxAttempts = opts.maxAttempts ?? 3;
+    let attempt = 1;
+    let lastError = "";
+    while (attempt <= maxAttempts) {
+      const r = await this.call(req, rec, opts, attempt, validate);
+      if (!r.validationError) return r.response;
+      lastError = r.validationError;
+      rec.log.warn("LLM output failed validation", { attempt, maxAttempts, error: lastError });
+      attempt += r.attempts;
+    }
+    throw new LlmOutputError(
+      `no valid output after ${maxAttempts} attempts: ${lastError}`,
+      maxAttempts,
+    );
   }
 
   private async call(
@@ -152,7 +192,7 @@ export class LlmClient {
       };
       try {
         const response = await p.chat(req);
-        const validationError = validate ? validate(response.content) : null;
+        const validationError = unusable(response) ?? validate?.(response.content) ?? null;
         const costUsd = this.cost(p, req.model, response.usage);
         rec.recordLlmCall({
           ...base,
@@ -201,7 +241,6 @@ export class LlmClient {
     rec: LlmRecorder,
     opts: GenerateOptions & { maxAttempts?: number } = {},
   ): Promise<z.output<S>> {
-    const maxAttempts = opts.maxAttempts ?? 3;
     let parsed: z.output<S> | undefined;
     const validate = (content: string): string | null => {
       let value: unknown;
@@ -215,18 +254,7 @@ export class LlmClient {
       parsed = r.data;
       return null;
     };
-    let attempt = 1;
-    let lastError = "";
-    while (attempt <= maxAttempts) {
-      const r = await this.call({ ...req, json: req.json ?? true }, rec, opts, attempt, validate);
-      if (!r.validationError) return parsed as z.output<S>;
-      lastError = r.validationError;
-      rec.log.warn("LLM output failed validation", { attempt, maxAttempts, error: lastError });
-      attempt += r.attempts;
-    }
-    throw new LlmOutputError(
-      `no valid output after ${maxAttempts} attempts: ${lastError}`,
-      maxAttempts,
-    );
+    await this.usable({ ...req, json: req.json ?? true }, rec, opts, validate);
+    return parsed as z.output<S>;
   }
 }
