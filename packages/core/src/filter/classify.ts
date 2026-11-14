@@ -15,14 +15,24 @@ import { mergeDuplicates, ruleFor, scoreQueries } from "./rules.ts";
 
 /**
  * Step 9, the model half (issue #17): the model reads the confirmed context and labels each query
- * core, related or off, and names the central entity it is about. It judges meaning (ERP the
+ * core, outer, bridge or off, and names the central entity it is about. It judges meaning (ERP the
  * software, not Erp the village); it never adds queries or numbers.
  */
 
-export const FILTER_TEMPLATE = { id: "filter-classify", version: "1" } as const;
+export const FILTER_TEMPLATE = { id: "filter-classify", version: "6" } as const;
 
-/** Step logic version (rules + prompt); bump when either changes. 2: no drop on detected language. */
-export const FILTER_STEP_VERSION = "2";
+/**
+ * Step logic version (rules + prompt); bump when either changes.
+ * 2: no drop on detected language. 3: four relevance tiers (core, outer, bridge, off).
+ * 4: the own-brand rule matches whole words.
+ * 5: a canonical topic name per query; bare category words are bridge.
+ * 6: offerings and entity + sector/size/material/feature with buying intent are core; a
+ *    predecessor or competing product keeps its own topic name.
+ * 7: a predecessor of the central entity is outer; the entity's own name as topic; places stay
+ *    in the topic.
+ * 8: topics always in English (names and places as written); directories and review sites are off.
+ */
+export const FILTER_STEP_VERSION = "8";
 
 export const ClassifyAnswer = z.object({
   results: z.array(
@@ -32,6 +42,8 @@ export const ClassifyAnswer = z.object({
       /** Exact central entity name, or empty when off. */
       entity: z.string().optional(),
       why: z.string().max(200).optional(),
+      /** Canonical English name of what the query is about, the same for every alias. */
+      topic: z.string().max(80).optional(),
     }),
   ),
 });
@@ -46,15 +58,18 @@ export function buildClassifyMessages(ctx: ClientContext, batch: string[]) {
     "You decide which search queries belong in a topical map for one business. You get the business profile and a numbered list of queries (in " +
       lang +
       ").",
-    "Label each query:",
-    '- "core": about what the business sells or does, or a direct buying or comparison question about it.',
-    '- "related": same subject, and a future customer would search it (problems, how-to, costs, care, terms), but not a direct sale.',
-    '- "off": a different meaning of the words, a different subject, jobs, education or courses, a different location, or a navigational search for an unrelated company.',
+    "Label each query by how close it is to the central entity and the source context:",
+    '- "core": about what the business sells or does (the central entity or one of its main attributes), or a direct buying or comparison question about it. A query that names one of the offerings, or the central entity or its category plus a sector, size, material, type, species or feature the business sells, with buying or choosing intent, is core too.',
+    '- "outer": a smaller attribute, feature, problem, cost, how-to or term of the central entity that a future customer searches. It supports the core but is not a direct sale.',
+    '- "bridge": a broader category the entity belongs to, a neighbouring product or subject, or a general concept, where the query names neither the central entity nor one of its attributes. The bare word for the wider category on its own is bridge too. Worth a mention on a page, not a page of its own.',
+    '- "off": a different meaning of the words, a different subject, jobs, education or courses, a different location, or a navigational search for an unrelated company, a directory or a review site.',
+    'Example for a business selling electric bikes: "electric bike kopen" is core, "electric bike accu bereik" is outer, "electric bike voor woon-werk" is core, "fiets", "fietsen" or "e-scooter" is bridge, an older model or predecessor of the electric bike is outer (its owners are future customers), "fietsenmaker vacature" is off.',
+    'Also give each query a "topic": what it is about, always in English (names and places stay as written), 1 to 5 words. Use one canonical name for the same thing every time: every name, abbreviation or spelling of one product or concept gets its official name. A predecessor, successor or competing product is a different product and keeps its own name. When the query is about a central entity itself, the topic is the name of that entity exactly as in the profile. A query that names a place keeps the place in its topic ("Electric bike repair Utrecht"). Put the attribute asked about after the name ("Electric bike battery range"). A query that only names the thing gets just the name.',
     `A query in another language than ${lang} is off, unless it is a term people in this market search in that form.`,
     "Use the profile's meaning of each central entity. A query that uses the same word in another sense is off. Things listed under notThis are off.",
     "Competitor names are fine when the query compares or chooses between options; a plain search for a competitor's own site or login is off.",
     local,
-    'Answer with JSON: {"results":[{"i":0,"label":"core|related|off","entity":"<exact central entity name, empty when off>","why":"<a few English words>"}]}. Answer every number exactly once.',
+    'Answer with JSON: {"results":[{"i":0,"label":"core|outer|bridge|off","entity":"<exact central entity name, empty when off>","why":"<a few English words>","topic":"<canonical English topic>"}]}. Answer every number exactly once.',
   ]
     .filter(Boolean)
     .join("\n");
@@ -92,7 +107,7 @@ export const FilterInput = z.object({
 });
 export type FilterInput = z.input<typeof FilterInput>;
 
-type Label = { label: z.infer<typeof RelevanceLabel>; entity?: string; why?: string };
+type Label = { label: RelevanceLabel; entity?: string; why?: string; topic?: string };
 
 export function filterStep(llm: JsonModel) {
   return defineStep({
@@ -144,6 +159,7 @@ export function filterStep(llm: JsonModel) {
             label: r.label,
             ...(r.entity && entities.has(r.entity) ? { entity: r.entity } : {}),
             ...(r.why ? { why: r.why } : {}),
+            ...(r.topic?.trim() ? { topic: r.topic.trim() } : {}),
           });
         }
       };
@@ -177,6 +193,7 @@ export function filterStep(llm: JsonModel) {
         const l = labels.get(q) as Label;
         q.label = l.label;
         if (l.why) q.why = l.why;
+        if (l.topic) q.topic = l.topic;
         if (l.label === "off") {
           drop(q, "off", `off topic${l.why ? `: ${l.why}` : ""}`);
         } else {

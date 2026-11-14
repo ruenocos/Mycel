@@ -1,9 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
-import { filterEval, filterRun } from "./filter.ts";
+import { DEFAULT_MIN_ACCURACY, filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
 import { research } from "./research.ts";
@@ -75,6 +76,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .option("--no-gsc", "don't use Search Console")
     .option("--no-dataforseo", "don't use DataforSEO")
     .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
+    .option(
+      "--force",
+      "replace a context that was already confirmed or reviewed (a backup is kept next to it)",
+    )
     .option("--debug", "mirror logs to the console")
     .action(
       async (
@@ -87,22 +92,32 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           gsc: boolean;
           dataforseo: boolean;
           budget: string;
+          force?: boolean;
           debug?: boolean;
         },
       ) => {
         const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        const res = await contextPropose({
-          runsDir,
-          site,
-          provider: opts.provider,
-          model: opts.model,
-          gsc: opts.gsc,
-          dataforseo: opts.dataforseo,
-          budgetUsd: Number(opts.budget),
-          ...(opts.market ? { market: opts.market } : {}),
-          ...(opts.out ? { out: opts.out } : {}),
-          ...(opts.debug ? { debug: true } : {}),
-        });
+        let res: Awaited<ReturnType<typeof contextPropose>>;
+        try {
+          res = await contextPropose({
+            runsDir,
+            site,
+            provider: opts.provider,
+            model: opts.model,
+            gsc: opts.gsc,
+            dataforseo: opts.dataforseo,
+            budgetUsd: Number(opts.budget),
+            ...(opts.market ? { market: opts.market } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.force ? { force: true } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          // Raised before a run exists (a bad --budget, a confirmed context in the way).
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
         for (const l of res.lines) out(l);
         out("");
         out(res.timeline);
@@ -242,6 +257,58 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       },
     );
 
+  program
+    .command("cluster")
+    .description(
+      "Step 10: cluster kept queries on shared top-10 results and decide page / section / micro",
+    )
+    .argument("<queries>", "queries.json written by mycel filter")
+    .option("--context <file>", "the confirmed context (default: context.json next to queries)")
+    .option("--out <file>", "where to write clusters (default: clusters.json next to queries)")
+    .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
+    .option("--budget <usd>", "DataforSEO budget for this run", "3")
+    .option("--min-shared <n>", "shared top-10 URLs for one page (ADR 0003)", "3")
+    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        queriesFile: string,
+        opts: {
+          context?: string;
+          out?: string;
+          liveSerp?: boolean;
+          budget: string;
+          minShared: string;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof clusterRun>>;
+        try {
+          res = await clusterRun({
+            runsDir,
+            queriesFile,
+            liveSerp: !!opts.liveSerp,
+            budgetUsd: Number(opts.budget),
+            minShared: Number(opts.minShared),
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+
   const gsc = program.command("gsc").description("Google Search Console tools");
   gsc
     .command("check")
@@ -260,8 +327,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
   const evals = program.command("eval").description("Evaluations");
   evals
     .command("filter")
-    .description("Score the step 9 filter on the labeled queries of the test clients (issue #17)")
-    .argument("[fixtures...]", "fixture folders with filter-eval.json", [
+    .description(
+      "Score the step 9 filter on the labeled queries of the test clients: the tuning set and the held-out set (issue #17). Fails below the pass mark",
+    )
+    .argument("[fixtures...]", "fixture folders with filter-eval.json and filter-holdout.json", [
       "fixtures/clients/plantpost",
       "fixtures/clients/praktijk-beweegruimte",
     ])
@@ -269,17 +338,33 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
     )
     .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option(
+      "--min-accuracy <share>",
+      "share of labeled queries each set must get right, 0 to 1",
+      String(DEFAULT_MIN_ACCURACY),
+    )
     .option("--debug", "mirror logs to the console")
     .action(
-      async (fixtures: string[], opts: { provider: string; model: string; debug?: boolean }) => {
+      async (
+        fixtures: string[],
+        opts: { provider: string; model: string; minAccuracy: string; debug?: boolean },
+      ) => {
         const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        const res = await filterEval({
-          runsDir,
-          fixtures,
-          provider: opts.provider,
-          model: opts.model,
-          ...(opts.debug ? { debug: true } : {}),
-        });
+        let res: Awaited<ReturnType<typeof filterEval>>;
+        try {
+          res = await filterEval({
+            runsDir,
+            fixtures,
+            provider: opts.provider,
+            model: opts.model,
+            minAccuracy: Number(opts.minAccuracy),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
         for (const l of res.lines) out(l);
         if (!res.ok) process.exitCode = 1;
       },

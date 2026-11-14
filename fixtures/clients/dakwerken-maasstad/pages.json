@@ -1,0 +1,119 @@
+{
+  "site": "dakwerkenmaasstad.example",
+  "source": "fixture",
+  "pages": [
+    {
+      "url": "/",
+      "kind": "home",
+      "title": "Dakwerken Maasstad | Dakdekker in Rotterdam",
+      "h1": "Uw dakdekker in Rotterdam",
+      "metaDescription": "Lekkage, reparatie of een nieuw dak? Gratis inspectie en binnen 48 uur een offerte.",
+      "text": "Dakwerken Maasstad repareert en vervangt platte daken, pannendaken en dakgoten in Rotterdam en omgeving. Bij lekkage zijn we vaak dezelfde week ter plaatse."
+    },
+    {
+      "url": "/dakreparatie/",
+      "kind": "service",
+      "title": "Dakreparatie in Rotterdam",
+      "h1": "Dakreparatie",
+      "text": "Een losse dakpan, een scheur in de bitumen of een lekkende aansluiting bij de schoorsteen: we zoeken de oorzaak en repareren het dak vakkundig."
+    },
+    {
+      "url": "/daklekkage/",
+      "kind": "service",
+      "title": "Daklekkage verhelpen | spoedservice",
+      "h1": "Daklekkage verhelpen",
+      "text": "Water in huis bij regen? Bij een lekkage maken we eerst het dak tijdelijk waterdicht en daarna repareren we de oorzaak."
+    },
+    {
+      "url": "/plat-dak/",
+      "kind": "service",
+      "title": "Plat dak vervangen: bitumen of EPDM",
+      "h1": "Plat dak vervangen",
+      "text": "Een plat dak gaat 20 tot 30 jaar mee. We vervangen de dakbedekking met bitumen of EPDM en isoleren het dak meteen als u dat wilt."
+    },
+    {
+      "url": "/plat-dak/bitumen/",
+      "kind": "service",
+      "title": "Bitumen dakbedekking",
+      "h1": "Bitumen dakbedekking",
+      "text": "Bitumen is de meest gebruikte dakbedekking voor platte daken in Nederland. Wij leggen het in twee lagen, gebrand of gekleefd."
+    },
+    {
+      "url": "/plat-dak/epdm/",
+      "kind": "service",
+      "title": "EPDM dakbedekking",
+      "h1": "EPDM dakbedekking",
+      "text": "EPDM is rubber dakbedekking uit één stuk, zonder naden. Het gaat lang mee en is geschikt voor platte daken, uitbouwen en garages."
+    },
+    {
+      "url": "/pannendak/",
+      "kind": "service",
+      "title": "Pannendak renoveren",
+      "h1": "Pannendak renoveren",
+      "text": "Bij een pannendak vervangen we kapotte pannen, vernieuwen we de panlatten en het folie, en isoleren we het dak van binnenuit of buitenaf."
+    },
+    {
+      "url": "/dakgoten/",
+      "kind": "service",
+      "title": "Dakgoot vervangen of repareren",
+      "h1": "Dakgoten",
+      "text": "Een lekkende of doorgezakte dakgoot zorgt voor vochtschade aan de gevel. We repareren, reinigen en vervangen zinken en kunststof dakgoten."
+    },
+    {
+      "url": "/dakisolatie/",
+      "kind": "service",
+      "title": "Dakisolatie in Rotterdam",
+      "h1": "Dakisolatie",
+      "text": "Een goed geïsoleerd dak bespaart veel op de energierekening. We isoleren platte daken van buitenaf en schuine daken van binnenuit."
+    },
+    {
+      "url": "/werkgebied/rotterdam/",
+      "kind": "location",
+      "title": "Dakdekker Rotterdam",
+      "h1": "Dakdekker in Rotterdam",
+      "text": "We werken in alle wijken van Rotterdam, van Kralingen tot Hillegersberg en van Delfshaven tot Rotterdam-Zuid."
+    },
+    {
+      "url": "/werkgebied/schiedam/",
+      "kind": "location",
+      "title": "Dakdekker Schiedam",
+      "h1": "Dakdekker in Schiedam",
+      "text": "Ook in Schiedam repareren en vervangen we platte daken, pannendaken en dakgoten."
+    },
+    {
+      "url": "/kosten/",
+      "kind": "pricing",
+      "title": "Wat kost een nieuw dak? Prijzen per m²",
+      "h1": "Kosten dakwerk",
+      "text": "Een indicatie van de prijzen per vierkante meter voor bitumen, EPDM en een pannendak, en wat de prijs beïnvloedt."
+    },
+    {
+      "url": "/blog/kosten-plat-dak-vervangen/",
+      "kind": "blog",
+      "title": "Wat kost het om een plat dak te vervangen?",
+      "h1": "Kosten plat dak vervangen",
+      "text": "De prijs voor het vervangen van een plat dak hangt af van de oppervlakte, de dakbedekking en of er isolatie bij komt."
+    },
+    {
+      "url": "/blog/daklekkage-oorzaken/",
+      "kind": "blog",
+      "title": "Daklekkage: de 7 meest voorkomende oorzaken",
+      "h1": "Oorzaken van daklekkage",
+      "text": "Van verstopte afvoeren tot een losgeraakte loodslab: dit zijn de oorzaken die we het vaakst tegenkomen."
+    },
+    {
+      "url": "/over-ons/",
+      "kind": "about",
+      "title": "Over Dakwerken Maasstad",
+      "h1": "Over ons",
+      "text": "Een familiebedrijf met zes vaste dakdekkers. We werken niet met onderaannemers en geven tien jaar garantie op nieuwe daken."
+    },
+    {
+      "url": "/offerte-aanvragen/",
+      "kind": "contact",
+      "title": "Gratis dakinspectie en offerte",
+      "h1": "Offerte aanvragen",
+      "text": "Vraag een gratis inspectie aan. We komen langs, maken foto's van het dak en sturen binnen 48 uur een offerte."
+    }
+  ]
+}

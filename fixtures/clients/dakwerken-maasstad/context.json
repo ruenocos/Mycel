@@ -1,0 +1,65 @@
+{
+  "site": { "url": "https://dakwerkenmaasstad.example", "name": "Dakwerken Maasstad" },
+  "market": { "country": "NL", "language": "nl", "city": "Rotterdam" },
+  "sourceContext": "Dakdekkersbedrijf in Rotterdam en omgeving voor particulieren en VvE's. Verdient aan dakreparaties, het vervangen van platte daken en pannendaken, dakgoten en dakisolatie, op offerte na een gratis inspectie.",
+  "centralEntities": [
+    {
+      "name": "dakwerk",
+      "disambiguation": "reparatie, vervanging en onderhoud van daken van woningen: platte daken, pannendaken en dakgoten",
+      "notThis": [
+        "vacature dakdekker",
+        "opleiding dakdekker",
+        "dakkapel plaatsen",
+        "zonnepanelen",
+        "dakterras inrichten"
+      ]
+    }
+  ],
+  "centralSearchIntent": "een betrouwbare dakdekker in Rotterdam vinden voor een lekkage, reparatie of nieuw dak, en weten wat het kost",
+  "audiences": [
+    "huiseigenaren in Rotterdam en omgeving met een lekkend of oud dak",
+    "VvE-beheerders van appartementencomplexen met een plat dak",
+    "kopers van een ouder huis die het dak willen laten keuren"
+  ],
+  "offerings": [
+    "dakreparatie",
+    "daklekkage verhelpen",
+    "plat dak vervangen",
+    "bitumen dakbedekking",
+    "EPDM dakbedekking",
+    "pannendak renoveren",
+    "dakgoot vervangen",
+    "dakisolatie"
+  ],
+  "competitors": [],
+  "answers": [
+    {
+      "id": "source-context",
+      "question": "Hoe verdient de site geld?",
+      "answer": "Dakwerk op offerte na een gratis inspectie, voor particulieren en VvE's.",
+      "status": "proposed",
+      "evidence": ["homepage", "offerte-aanvragen"]
+    },
+    {
+      "id": "central-entity",
+      "question": "Wat is het centrale onderwerp van de site?",
+      "answer": "Dakwerk in Rotterdam: reparatie, vervanging en onderhoud van platte en schuine daken.",
+      "status": "proposed",
+      "evidence": ["dienstpagina's"]
+    },
+    {
+      "id": "service-area",
+      "question": "Waar werkt het bedrijf?",
+      "answer": "Rotterdam, Schiedam, Capelle aan den IJssel en Barendrecht.",
+      "status": "proposed",
+      "evidence": ["werkgebied"]
+    },
+    {
+      "id": "not-offered",
+      "question": "Wat doet het bedrijf niet?",
+      "answer": "Geen dakkapellen, geen zonnepanelen, geen bedrijfshallen.",
+      "status": "proposed",
+      "evidence": ["over-ons"]
+    }
+  ]
+}

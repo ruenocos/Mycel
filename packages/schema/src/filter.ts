@@ -8,14 +8,28 @@ import { Query } from "./query.ts";
  * see what was thrown out and why.
  */
 
-export const RelevanceLabel = z.enum(["core", "related", "off"]);
-export type RelevanceLabel = z.infer<typeof RelevanceLabel>;
+/**
+ * How close a query is to the central entity (Koray step 9 + core/outer sections, doc 02):
+ * - core: what the business sells or does, or a buying/comparison question about it;
+ * - outer: a smaller attribute, problem or how-to around the entity, supporting the core;
+ * - bridge: a broader category or neighbouring subject; worth a mention, never its own page;
+ * - off: outside the source context (dropped).
+ * "related" was the v2 name for outer and is still read.
+ */
+export const RELEVANCE_TIERS = ["core", "outer", "bridge", "off"] as const;
+export const RelevanceLabel = z.preprocess(
+  (v) => (v === "related" ? "outer" : v),
+  z.enum(RELEVANCE_TIERS),
+);
+export type RelevanceLabel = (typeof RELEVANCE_TIERS)[number];
 
 export const FilteredQuery = Query.extend({
   /** The model's judgement; absent when a rule dropped the query before the model saw it. */
   label: RelevanceLabel.optional(),
   /** Short English reason from the model, for review. */
   why: z.string().optional(),
+  /** Canonical English topic name from the model: aliases of one thing share it. */
+  topic: z.string().optional(),
 });
 export type FilteredQuery = z.infer<typeof FilteredQuery>;
 

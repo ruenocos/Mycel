@@ -63,7 +63,7 @@ function stub(
           skipped = true;
           return [];
         }
-        const label = labels[text] ?? "related";
+        const label = labels[text] ?? "outer";
         return [{ i, label, entity: label === "off" ? "" : "ERP", why: `stub ${label}` }];
       });
       return schema.parse({ results });
@@ -119,7 +119,7 @@ describe("rules", () => {
       },
       {
         ...q("b", { sources: ["dfs_related", "dfs_suggestions"], metrics: { volume: 9 } }),
-        label: "related",
+        label: "outer",
         filter: { kept: true },
       },
       { ...q("c"), label: "off", filter: { kept: false } },
@@ -133,7 +133,7 @@ describe("rules", () => {
 
 describe("filterStep", () => {
   it("runs rules first, labels the rest, and keeps dropped queries with a reason", async () => {
-    const llm = stub({ "erp boxtel": "off", "wat is erp": "related", "erp implementatie": "core" });
+    const llm = stub({ "erp boxtel": "off", "wat is erp": "outer", "erp implementatie": "core" });
     const out = await runStep(newRun(), filterStep(llm), {
       context: erp,
       site: erp.site,

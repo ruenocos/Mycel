@@ -43,12 +43,15 @@ export interface SerpLike {
     rank: number;
     title: string;
     key: string;
+    /** How far `key` can be trusted (ADR 0010). */
+    urlSource?: "url" | "breadcrumb" | "domain";
     url: string | null;
     domain: string | null;
   }[];
   aiOverview: { present: boolean; references: { url: string; domain: string | null }[] };
   peopleAlsoAsk: string[];
   relatedSearches: string[];
+  unresolvedUrls?: number;
 }
 // biome-ignore lint/suspicious/noExplicitAny: the recorder shape belongs to connectors; core passes its StepContext
 type Rec = any;
@@ -306,20 +309,47 @@ export function researchStep(port: ResearchPort) {
       for (const s of seeds) bag.add(s.text, "seed");
 
       // Labs keyword ideas around every seed. Sequential, so the budget check is exact.
-      let related = 0;
-      let suggested = 0;
-      for (const s of seeds) {
-        for (const k of await port.relatedKeywords(s.text, market, ctx)) {
-          bag.add(k.keyword, "dfs_related", { idea: k });
-          related++;
+      // One seed the API keeps refusing (e.g. a steady HTTP 500) shouldn't throw away the run;
+      // the budget still stops it, and a source that fails for every seed stops it too.
+      const ideas = async (
+        source: "dfs_related" | "dfs_suggestions",
+        call: (seed: string) => Promise<KeywordIdeaLike[]>,
+      ) => {
+        let items = 0;
+        const failed: string[] = [];
+        let last: unknown;
+        for (const s of seeds) {
+          let got: KeywordIdeaLike[];
+          try {
+            got = await call(s.text);
+          } catch (err) {
+            if ((err as Error)?.name === "BudgetExceededError") throw err;
+            ctx.log.warn(`${source} failed for a seed, skipping it`, {
+              seed: s.text,
+              error: (err as Error)?.message ?? String(err),
+            });
+            failed.push(s.text);
+            last = err;
+            continue;
+          }
+          for (const k of got) {
+            bag.add(k.keyword, source, { idea: k });
+            items++;
+          }
         }
-        for (const k of await port.keywordSuggestions(s.text, market, ctx)) {
-          bag.add(k.keyword, "dfs_suggestions", { idea: k });
-          suggested++;
+        if (seeds.length > 0 && failed.length === seeds.length) throw last;
+        if (failed.length > 0) {
+          warnings.push(`${source} failed for ${failed.length} seed(s): ${failed.join(", ")}.`);
         }
-      }
-      report("dfs_related", seeds.length, related);
-      report("dfs_suggestions", seeds.length, suggested);
+        report(
+          source,
+          seeds.length,
+          items,
+          failed.length > 0 ? `failed for ${failed.join(", ")}` : undefined,
+        );
+      };
+      await ideas("dfs_related", (seed) => port.relatedKeywords(seed, market, ctx));
+      await ideas("dfs_suggestions", (seed) => port.keywordSuggestions(seed, market, ctx));
 
       // The client's own ranked keywords.
       if (options.ranked && !reserved) {
@@ -374,8 +404,16 @@ export function researchStep(port: ResearchPort) {
             rel++;
           }
         }
-        const note = blocked ? `${blocked} skipped: not cached, live SERPs off` : undefined;
-        report("serp", seeds.length - blocked, serps.length, note);
+        // Results known by domain only can't prove two queries share a page (ADR 0010).
+        const organic = serps.flatMap((s) => s.organic);
+        const domainOnly = organic.filter((o) => o.urlSource === "domain").length;
+        const notes = [
+          ...(blocked ? [`${blocked} skipped: not cached, live SERPs off`] : []),
+          ...(domainOnly
+            ? [`${domainOnly} of ${organic.length} results known by domain only`]
+            : []),
+        ];
+        report("serp", seeds.length - blocked, serps.length, notes.join("; ") || undefined);
         report("serp_paa", 0, paa);
         report("serp_related", 0, rel);
         if (blocked) {
@@ -449,6 +487,7 @@ export function researchStep(port: ResearchPort) {
             organic: s.organic.map((o) => ({
               rank: o.rank,
               key: o.key,
+              ...(o.urlSource ? { urlSource: o.urlSource } : {}),
               url: o.url,
               domain: o.domain ? cleanDomain(o.domain) : null,
               title: o.title,
@@ -459,6 +498,7 @@ export function researchStep(port: ResearchPort) {
             },
             peopleAlsoAsk: s.peopleAlsoAsk,
             relatedSearches: s.relatedSearches,
+            ...(s.unresolvedUrls !== undefined ? { unresolvedUrls: s.unresolvedUrls } : {}),
           }),
         ),
         competitors,

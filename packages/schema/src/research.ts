@@ -22,6 +22,10 @@ export const ResearchSeed = z.object({
 });
 export type ResearchSeed = z.infer<typeof ResearchSeed>;
 
+/** Where a SERP result's overlap key came from (ADR 0010). */
+export const SerpUrlSource = z.enum(["url", "breadcrumb", "domain"]);
+export type SerpUrlSource = z.infer<typeof SerpUrlSource>;
+
 /** One SERP, trimmed to what later steps use (clustering, PAA, AI Overview presence). */
 export const SerpSnapshot = z.object({
   keyword: z.string().min(1),
@@ -30,6 +34,12 @@ export const SerpSnapshot = z.object({
       rank: z.number().int().positive(),
       /** SERP-overlap key (ADR 0010). */
       key: z.string().min(1),
+      /**
+       * How far the key can be trusted (ADR 0010): the real URL, a path rebuilt from the
+       * breadcrumb (may be cut off), or only the domain. Optional: datasets written before this
+       * field existed don't have it.
+       */
+      urlSource: SerpUrlSource.optional(),
       url: z.string().nullable(),
       domain: z.string().nullable(),
       title: z.string(),
@@ -41,6 +51,8 @@ export const SerpSnapshot = z.object({
   }),
   peopleAlsoAsk: z.array(z.string()),
   relatedSearches: z.array(z.string()),
+  /** Organic results whose real URL Google hid behind a redirect (ADR 0010). */
+  unresolvedUrls: z.number().int().nonnegative().optional(),
 });
 export type SerpSnapshot = z.infer<typeof SerpSnapshot>;
 

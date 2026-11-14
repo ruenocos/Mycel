@@ -1,12 +1,13 @@
 # Test clients
 
-Two fictional clients that prove the pipeline is generic (ADR 0007). Everything here is
+Fictional clients that prove the pipeline is generic (ADR 0007). Everything here is
 synthetic, so it may live in the repo (ADR 0008). Real client data never goes here.
 
-| Client                  | Type                     | Stress test                                   |
-| ----------------------- | ------------------------ | --------------------------------------------- |
-| `plantpost`             | Houseplant webshop, B2C  | Buying intent, category vs product vs guide   |
-| `praktijk-beweegruimte` | Physio practice, Utrecht | Local intent, location × service, health info |
+| Client                  | Type                     | Stress test                                                                     |
+| ----------------------- | ------------------------ | ------------------------------------------------------------------------------- |
+| `plantpost`             | Houseplant webshop, B2C  | Buying intent, category vs product vs guide                                     |
+| `praktijk-beweegruimte` | Physio practice, Utrecht | Local intent, location × service, health info                                   |
+| `dakwerken-maasstad`    | Roofer, Rotterdam        | Blind test: added after clustering was tuned on the other three; never tuned on |
 
 Each client folder holds:
 
@@ -18,6 +19,9 @@ Each client folder holds:
 - `checklist.md`: the human half of the gate.
 - `filter-eval.json`: labeled queries for the step 9 filter (`FilterEvalSet`): keep or drop, with
   a short why. `mycel eval filter` scores the filter on them.
+- `filter-holdout.json`: a second labeled set with fresh queries, scored by `mycel eval filter` and
+  never tuned on. Every client the filter is tuned on has one. A blind test client has none: its
+  `filter-eval.json` is never tuned on either.
 
 Wons approves these fixtures before the first pipeline run. After approval, the answers in
 `context.json` move from `proposed` to `confirmed`.

@@ -1,4 +1,10 @@
-import type { ClientContext, FilteredQuery, Query, QuerySource } from "@mycel/schema";
+import type {
+  ClientContext,
+  FilteredQuery,
+  Query,
+  QuerySource,
+  RelevanceLabel,
+} from "@mycel/schema";
 import { brandTokens, isBrandQuery } from "../research/seeds.ts";
 
 /**
@@ -107,9 +113,10 @@ const SOURCE_GROUP: Record<QuerySource, string> = {
 };
 const GROUPS = 4;
 
-export const RELEVANCE: Record<"core" | "related" | "off", number> = {
+export const RELEVANCE: Record<RelevanceLabel, number> = {
   core: 1,
-  related: 0.6,
+  outer: 0.6,
+  bridge: 0.25,
   off: 0,
 };
 
@@ -117,7 +124,7 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
 
 /**
  * Scores in 0..1.
- * - relevance: the model's label (core 1, related 0.6, off 0).
+ * - relevance: the model's tier (core 1, outer 0.6, bridge 0.25, off 0).
  * - prominence: how many independent kinds of evidence surfaced it (own data, SERP features,
  *   keyword ideas, competitors), out of four.
  * - popularity: search volume or GSC impressions on a log scale, relative to the dataset's top.

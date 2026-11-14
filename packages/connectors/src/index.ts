@@ -6,8 +6,14 @@ export {
   DataforseoError,
   type DataforseoOptions,
   LiveCallBlockedError,
+  type SerpBatchResult,
 } from "./dataforseo/client.ts";
-export { type MarketParams, marketParams } from "./dataforseo/locations.ts";
+export {
+  type DfsLocation,
+  findCity,
+  type MarketParams,
+  marketParams,
+} from "./dataforseo/locations.ts";
 export * from "./dataforseo/parse.ts";
 export * from "./dataforseo/url.ts";
 export {

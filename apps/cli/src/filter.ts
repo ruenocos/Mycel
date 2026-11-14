@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { FakeProvider, LlmClient, type LlmProvider, OllamaProvider } from "@mycel/connectors";
 import {
   CORE_VERSION,
@@ -29,7 +29,7 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
     const n = user.split("\nQueries:\n")[1]?.split("\n").filter(Boolean).length ?? 0;
     return JSON.stringify({
-      results: Array.from({ length: n }, (_, i) => ({ i, label: "related", why: "fake" })),
+      results: Array.from({ length: n }, (_, i) => ({ i, label: "outer", why: "fake" })),
     });
   });
   const ollama = new OllamaProvider({
@@ -137,62 +137,100 @@ export async function filterRun(opts: FilterOptions): Promise<FilterResult> {
   };
 }
 
+/**
+ * The two labeled sets per test client. The tuning set is the one to look at while changing the
+ * prompt or the rules. The held-out set is only ever scored, never tuned on: it shows whether a
+ * change helps on queries nobody looked at, or only on the ones it was fitted to.
+ */
+export const FILTER_EVAL_SETS = [
+  { kind: "tuning", file: "filter-eval.json" },
+  { kind: "held-out", file: "filter-holdout.json" },
+] as const;
+export type FilterEvalKind = (typeof FILTER_EVAL_SETS)[number]["kind"];
+
+/** Share of labeled queries the filter must get right, per set. */
+export const DEFAULT_MIN_ACCURACY = 0.9;
+
 export interface FilterEvalOptions {
   runsDir: string;
-  /** Fixture folders with context.json and filter-eval.json. */
+  /** Fixture folders with context.json, filter-eval.json and (optional) filter-holdout.json. */
   fixtures: string[];
   provider: string;
   model: string;
+  /** Pass mark per set, 0 to 1. Below it the eval fails. */
+  minAccuracy?: number;
   debug?: boolean;
   env?: NodeJS.ProcessEnv;
 }
 
+export interface FilterEvalSetScore extends FilterEvalScore {
+  set: FilterEvalKind;
+  passed: boolean;
+}
+
 export async function filterEval(
   opts: FilterEvalOptions,
-): Promise<{ ok: boolean; scores: FilterEvalScore[]; lines: string[] }> {
+): Promise<{ ok: boolean; scores: FilterEvalSetScore[]; lines: string[] }> {
   const env = opts.env ?? process.env;
+  const minAccuracy = opts.minAccuracy ?? DEFAULT_MIN_ACCURACY;
+  if (!(minAccuracy >= 0 && minAccuracy <= 1)) {
+    throw new Error(`--min-accuracy must be between 0 and 1, got ${opts.minAccuracy}`);
+  }
   const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
-  const scores: FilterEvalScore[] = [];
+  const scores: FilterEvalSetScore[] = [];
   const lines: string[] = [];
   let ok = true;
   for (const dir of opts.fixtures) {
     const context = ClientContext.parse(readJson(join(dir, "context.json")));
-    const set = FilterEvalSet.parse(readJson(join(dir, "filter-eval.json")));
-    const run = RunStore.create({
-      runsDir: opts.runsDir,
-      client: set.client,
-      command: "eval filter",
-      cliVersion: CORE_VERSION,
-      config: { fixture: dir, model: opts.model },
-      ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
-    });
-    let failure: unknown;
-    try {
-      const result = await runStep(run, filterStep(llm), {
-        context,
-        site: context.site,
-        queries: set.cases.map((c) => ({
-          text: c.query,
-          normalized: normalizeQuery(c.query),
-          sources: ["seed" as const],
-        })),
-        model: opts.model,
-      });
-      const s = scoreFilterEval(set, result);
-      scores.push(s);
-      lines.push(
-        `${s.client.padEnd(24)} accuracy ${s.accuracy}  precision ${s.precision}  recall ${s.recall}  (${s.cases} cases, run ${run.runId})`,
-      );
-      for (const m of s.misses) {
-        lines.push(
-          `  miss  "${m.query}": expected ${m.expected}, got ${m.got}${m.reason ? ` (${m.reason})` : ""}. Label: ${m.why}`,
-        );
+    for (const { kind, file } of FILTER_EVAL_SETS) {
+      if (kind === "held-out" && !existsSync(join(dir, file))) {
+        lines.push(`${basename(dir).padEnd(24)} ${kind.padEnd(8)} no ${file}: not scored`);
+        continue;
       }
-    } catch (err) {
-      failure = err;
-      lines.push(`${set.client.padEnd(24)} failed: ${(err as Error).message}`);
+      const set = FilterEvalSet.parse(readJson(join(dir, file)));
+      const run = RunStore.create({
+        runsDir: opts.runsDir,
+        client: set.client,
+        command: "eval filter",
+        cliVersion: CORE_VERSION,
+        config: { fixture: dir, set: kind, model: opts.model, minAccuracy },
+        ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
+      });
+      let failure: unknown;
+      try {
+        const result = await runStep(run, filterStep(llm), {
+          context,
+          site: context.site,
+          queries: set.cases.map((c) => ({
+            text: c.query,
+            normalized: normalizeQuery(c.query),
+            sources: ["seed" as const],
+          })),
+          model: opts.model,
+        });
+        const s = scoreFilterEval(set, result);
+        const passed = s.accuracy >= minAccuracy;
+        scores.push({ ...s, set: kind, passed });
+        if (!passed) ok = false;
+        lines.push(
+          `${s.client.padEnd(24)} ${kind.padEnd(8)} ${passed ? "pass" : "FAIL"}  accuracy ${s.accuracy} (needs ${minAccuracy})  precision ${s.precision}  recall ${s.recall}  (${s.cases} cases, run ${run.runId})`,
+        );
+        for (const m of s.misses) {
+          lines.push(
+            `  miss  "${m.query}": expected ${m.expected}, got ${m.got}${m.reason ? ` (${m.reason})` : ""}. Label: ${m.why}`,
+          );
+        }
+      } catch (err) {
+        failure = err;
+        lines.push(`${set.client.padEnd(24)} ${kind.padEnd(8)} failed: ${(err as Error).message}`);
+      }
+      if (run.finish(failure).status !== "ok") ok = false;
     }
-    if (run.finish(failure).status !== "ok") ok = false;
+  }
+  if (scores.some((s) => !s.passed)) {
+    lines.push(
+      "Below the pass mark. Fix the prompt or rules on the tuning set only; never fit them to the held-out misses.",
+    );
   }
   return { ok, scores, lines };
 }
