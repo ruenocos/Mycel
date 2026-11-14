@@ -10,6 +10,7 @@ import {
   DataforseoError,
   LiveCallBlockedError,
 } from "./client.ts";
+import { findCity } from "./locations.ts";
 import { parseCompetitorDomains, parseSerp } from "./parse.ts";
 import { hostOfKey, isGoogleRedirect, keyFromBreadcrumb, normalizeUrl, resultKey } from "./url.ts";
 
@@ -661,6 +662,98 @@ describe("DataforseoClient", () => {
     });
     await expect(c.relatedKeywords("a", market, recorder().rec)).rejects.toThrow(/40100/);
     expect(n).toBe(1);
+  });
+});
+
+/** A slice of DataforSEO's real NL location list (GET serp/google/locations/nl). */
+const nlLocations = [
+  { location_code: 20768, location_name: "Utrecht,Netherlands", location_type: "Province" },
+  { location_code: 1010659, location_name: "Utrecht,Utrecht,Utrecht,Netherlands" },
+  { location_code: 9063490, location_name: "Utrecht,Utrecht,Netherlands", type: "Municipality" },
+  { location_code: 9050888, location_name: "Elst,Utrecht,Netherlands" },
+  { location_code: 9050889, location_name: "Elst,Gelderland,Netherlands" },
+  {
+    location_code: 9063436,
+    location_name: "Utrechtse Heuvelrug,Utrecht,Netherlands",
+    type: "Municipality",
+  },
+  { location_code: 1010543, location_name: "'s-Hertogenbosch,North Brabant,Netherlands" },
+].map(({ type, ...l }) => ({
+  country_iso_code: "NL",
+  location_type: type ?? "City",
+  ...l,
+}));
+
+describe("city-level SERP locations", () => {
+  const nl = (city: string) => ({ country: "NL", language: "nl", city });
+
+  it("finds the city, not the province or municipality with the same name", () => {
+    expect(findCity(nlLocations, nl("Utrecht")).match?.location_code).toBe(1010659);
+    expect(findCity(nlLocations, nl("utrecht ")).match?.location_code).toBe(1010659);
+    expect(findCity(nlLocations, nl("s Hertogenbosch")).match?.location_code).toBe(1010543);
+    expect(findCity(nlLocations, nl("Utrechtse Heuvelrug")).match?.location_type).toBe(
+      "Municipality",
+    );
+  });
+
+  it("doesn't guess between namesakes; a region settles it", () => {
+    const elst = findCity(nlLocations, nl("Elst"));
+    expect(elst.match).toBeUndefined();
+    expect(elst.candidates).toHaveLength(2);
+    expect(findCity(nlLocations, nl("Elst, Gelderland")).match?.location_code).toBe(9050889);
+    expect(findCity(nlLocations, nl("Atlantis"))).toEqual({ candidates: [] });
+    expect(findCity(nlLocations, { country: "NL", language: "nl" })).toEqual({ candidates: [] });
+  });
+
+  const dfs = (seen: { url: string; body: unknown }[]) =>
+    client(
+      async (url, init) => {
+        const u = String(url);
+        seen.push({ url: u, body: init?.body ? JSON.parse(String(init.body)) : null });
+        if (u.endsWith("/serp/google/locations/nl")) return ok(null, 0, { result: nlLocations });
+        if (u.endsWith("/task_post")) {
+          return ok(null, 0.0006, { status_code: 20100, status_message: "Task Created." });
+        }
+        if (u.includes("/task_get/")) return ok(serpFixture, 0);
+        return ok({ items: [] }, 0.01);
+      },
+      { allowLiveSerp: true },
+    );
+  const locationCodes = (seen: { body: unknown }[]) =>
+    seen.flatMap((s) =>
+      Array.isArray(s.body) ? [(s.body[0] as { location_code: number }).location_code] : [],
+    );
+
+  it("asks Google from the market's city for SERPs and keeps keyword data at country level", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const c = dfs(seen);
+    const { rec, warnings } = recorder();
+    await c.serpOrganic("fysiotherapeut", nl("Utrecht"), rec);
+    await c.serpOrganicBatch(["fysio lombok"], nl("Utrecht"), rec);
+    await c.relatedKeywords("fysiotherapie", nl("Utrecht"), rec);
+    expect(locationCodes(seen)).toEqual([1010659, 1010659, 2528]);
+    // The location list is fetched once, and it is free.
+    expect(seen.filter((s) => s.url.endsWith("/locations/nl"))).toHaveLength(1);
+    expect(c.spentUsd).toBe(0.0112);
+    expect(warnings).toEqual([]);
+
+    // A later run reads the list from the cache.
+    const again: { url: string; body: unknown }[] = [];
+    await dfs(again).serpOrganic("fysiotherapeut", nl("Utrecht"), rec);
+    expect(again).toEqual([]);
+  });
+
+  it("falls back to the country, with a warning, when the city can't be pinned down", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const c = dfs(seen);
+    const { rec, warnings } = recorder();
+    await c.serpOrganic("fysiotherapeut", nl("Elst"), rec);
+    await c.serpOrganic("fysiotherapeut", nl("Atlantis"), rec);
+    expect(locationCodes(seen)).toEqual([2528]); // the second call is the same request: cached
+    expect(warnings).toEqual([
+      expect.stringContaining("more than one place"),
+      expect.stringContaining("not in DataforSEO's location list"),
+    ]);
   });
 });
 

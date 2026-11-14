@@ -3,7 +3,7 @@ import type { Market } from "@mycel/schema";
 import type { CallRecorder } from "../recorder.ts";
 import { type CacheEntry, FileCache, requestHash } from "./cache.ts";
 import { SpendLedger } from "./ledger.ts";
-import { marketParams } from "./locations.ts";
+import { type DfsLocation, findCity, type MarketParams, marketParams } from "./locations.ts";
 import {
   type CompetitorDomain,
   type KeywordIdea,
@@ -106,6 +106,8 @@ export class DataforseoClient {
   private readonly price = new Map<string, number>();
   /** Endpoints whose first paid call is still out, so its price isn't known yet. */
   private readonly pricing = new Map<string, Promise<void>>();
+  /** SERP location per "country|city", looked up once per run. */
+  private readonly serpPlaces = new Map<string, Promise<MarketParams>>();
 
   constructor(private readonly opts: DataforseoOptions) {
     for (const [name, value] of [
@@ -212,7 +214,7 @@ export class DataforseoClient {
     const endpoint = "serp/google/organic/task_post";
     const payload = {
       keyword,
-      ...marketParams(market),
+      ...(await this.serpParams(market, rec)),
       device: opts.device ?? "desktop",
       depth: opts.depth ?? 10,
     };
@@ -250,6 +252,63 @@ export class DataforseoClient {
     });
     this.tasks.delete(hash);
     return parseSerp(keyword, result);
+  }
+
+  /**
+   * Where to ask Google from. A market with a city gets that city's SERP (a physio in Utrecht
+   * competes in Utrecht, not in the Netherlands); DataforSEO's free location list, cached like
+   * any response, turns the name into a code. A city that isn't found, or that matches more than
+   * one place, falls back to the country with a warning.
+   */
+  private serpParams(market: Market, rec: CallRecorder): Promise<MarketParams> {
+    const country = marketParams(market);
+    if (!market.city) return Promise.resolve(country);
+    const key = `${market.country}|${market.city}`;
+    let known = this.serpPlaces.get(key);
+    if (!known) {
+      known = this.cityParams(market, country, rec);
+      this.serpPlaces.set(key, known);
+      // A failed lookup isn't remembered: the next SERP call tries again.
+      known.catch(() => this.serpPlaces.delete(key));
+    }
+    return known;
+  }
+
+  private async cityParams(
+    market: Market,
+    country: MarketParams,
+    rec: CallRecorder,
+  ): Promise<MarketParams> {
+    const endpoint = `serp/google/locations/${market.country.toLowerCase()}`;
+    const hash = requestHash(endpoint, {});
+    let locations = this.hit(endpoint, hash, rec)?.result as DfsLocation[] | undefined;
+    if (!locations) {
+      const res = await this.request("GET", endpoint, undefined, rec, hash);
+      locations = (res.tasks?.[0]?.result ?? []) as DfsLocation[];
+      this.cache.set(hash, {
+        endpoint,
+        payload: {},
+        fetchedAt: new Date().toISOString(),
+        costUsd: 0,
+        result: locations,
+      });
+    }
+    const { match, candidates } = findCity(locations, market);
+    if (!match) {
+      rec.log.warn(
+        candidates.length
+          ? "more than one place has this city name; SERPs use the country. Add the region to the market's city"
+          : "city not in DataforSEO's location list; SERPs use the country",
+        { city: market.city, candidates: candidates.map((c) => c.location_name).slice(0, 5) },
+      );
+      return country;
+    }
+    rec.log.debug("SERPs are fetched for the market's city", {
+      city: market.city,
+      location: match.location_name,
+      locationCode: match.location_code,
+    });
+    return { ...country, location_code: match.location_code };
   }
 
   private async postSerpTask(
@@ -323,10 +382,11 @@ export class DataforseoClient {
     };
     const todo: Job[] = [];
     const pending = new Map<string, Job>();
+    const where = await this.serpParams(market, rec);
     for (const keyword of [...new Set(keywords)]) {
       const payload = {
         keyword,
-        ...marketParams(market),
+        ...where,
         device: opts.device ?? "desktop",
         depth: opts.depth ?? 10,
       };
