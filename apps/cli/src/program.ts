@@ -76,6 +76,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .option("--no-gsc", "don't use Search Console")
     .option("--no-dataforseo", "don't use DataforSEO")
     .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
+    .option(
+      "--force",
+      "replace a context that was already confirmed or reviewed (a backup is kept next to it)",
+    )
     .option("--debug", "mirror logs to the console")
     .action(
       async (
@@ -88,6 +92,7 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           gsc: boolean;
           dataforseo: boolean;
           budget: string;
+          force?: boolean;
           debug?: boolean;
         },
       ) => {
@@ -104,10 +109,11 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             budgetUsd: Number(opts.budget),
             ...(opts.market ? { market: opts.market } : {}),
             ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.force ? { force: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
           });
         } catch (err) {
-          // Raised before a run exists (a bad --budget): nothing to log yet.
+          // Raised before a run exists (a bad --budget, a confirmed context in the way).
           out(`failed      ${(err as Error).message}`);
           process.exitCode = 1;
           return;

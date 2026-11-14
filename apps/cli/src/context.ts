@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
   FakeProvider,
@@ -84,10 +84,46 @@ export interface ProposeOptions {
   /** Use DataforSEO for ranked keywords and competitors. Default true when keys are set. */
   dataforseo?: boolean;
   budgetUsd?: number;
+  /** Replace a context a person already confirmed or started reviewing (a backup is kept). */
+  force?: boolean;
   cacheDir?: string;
   debug?: boolean;
   env?: NodeJS.ProcessEnv;
   today?: Date;
+}
+
+/**
+ * A confirmed context is a person's work: later steps run on it and it exists in one place.
+ * Refuse to replace it (or one whose answers someone already started reviewing) unless forced.
+ */
+export function assertReplaceable(file: string, force = false): void {
+  if (force || !existsSync(file)) return;
+  let reviewed: string | undefined;
+  try {
+    const ctx = ClientContext.parse(JSON.parse(readFileSync(file, "utf8")));
+    if (ctx.confirmed) {
+      reviewed = `was confirmed by ${ctx.confirmed.by} on ${ctx.confirmed.at.slice(0, 10)}`;
+    } else if (ctx.answers.some((a) => a.status !== "proposed")) {
+      reviewed = "has answers someone already reviewed";
+    }
+  } catch {
+    // Not a context this version can read. Whatever it is, it is someone's file: keep it.
+    reviewed = "isn't a context this version can read";
+  }
+  if (reviewed) {
+    throw new Error(
+      `${file} ${reviewed}; a new proposal would replace it. Use --out for another file, or --force to replace it (the current file is kept as a backup)`,
+    );
+  }
+}
+
+/** Copy `file` next to itself before it is replaced. Returns the copy's path, if there was a file. */
+export function backupFile(file: string, now = new Date()): string | undefined {
+  if (!existsSync(file)) return undefined;
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const copy = join(dirname(file), `${basename(file, ".json")}.backup-${stamp}.json`);
+  copyFileSync(file, copy);
+  return copy;
 }
 
 export interface ProposeResult {
@@ -105,6 +141,10 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
   const cacheDir = opts.cacheDir ?? ".cache";
   const lines: string[] = [];
   const budgetUsd = runBudget(opts.budgetUsd, 0.5);
+  // Where the proposal will land, when that is known up front: check before any paid call.
+  const outFor = (siteUrl: string) =>
+    opts.out ?? join("clients", new URL(siteUrl).hostname, "context.json");
+  if (opts.out || isUrl(opts.site)) assertReplaceable(outFor(opts.site), opts.force);
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: isUrl(opts.site) ? new URL(opts.site).hostname : basename(opts.site),
@@ -207,15 +247,19 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
       `evidence    ${ev.gscQueries.length} GSC queries, ${ev.rankedKeywords.length} ranked keywords, ${ev.competitorDomains.length} competitors`,
     );
 
+    const target = outFor(ev.site.url);
+    assertReplaceable(target, opts.force);
     const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
     const context = await runStep(run, contextProposeStep(llm), {
       evidence: ev,
       market: gathered.market,
       model: opts.model,
     });
-    out = opts.out ?? join("clients", new URL(ev.site.url).hostname, "context.json");
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, `${JSON.stringify(context, null, 2)}\n`);
+    mkdirSync(dirname(target), { recursive: true });
+    const backup = backupFile(target, opts.today);
+    if (backup) lines.push(`backup      ${backup} (the file that was there)`);
+    writeFileSync(target, `${JSON.stringify(context, null, 2)}\n`);
+    out = target;
     lines.push(`proposal    ${out}`);
     lines.push(`next        mycel context confirm ${out}`);
   } catch (err) {
@@ -262,6 +306,10 @@ export async function contextConfirm(
     throw new Error(`no context file at ${file}; run mycel context propose first`);
   let ctx = ClientContext.parse(JSON.parse(readFileSync(file, "utf8")));
   const save = () => writeFileSync(file, `${JSON.stringify(ctx, null, 2)}\n`);
+  if (ctx.confirmed) {
+    // Going through a confirmed context again changes it answer by answer: keep the old one.
+    io.print(`Already confirmed by ${ctx.confirmed.by}. Backup: ${backupFile(file, now())}`);
+  }
   io.print(`Reviewing ${file}. Press Enter to keep a proposal, or type a replacement.`);
   for (const field of REVIEW_FIELDS) {
     for (;;) {
