@@ -321,6 +321,48 @@ describe("relevance tiers and merges", () => {
     expect(r.clusters).toHaveLength(1);
   });
 
+  it("folds clusters whose members are the same words in another order", () => {
+    const r = run(
+      [
+        q("plat dak vervangen kosten per m2", { volume: 300, label: "core", relevance: 1 }),
+        q("wat kost een plat dak vervangen", { volume: 200, label: "core", relevance: 1 }),
+        q("kosten plat dak vervangen", { volume: 90, label: "outer" }),
+        q("vervangen plat dak kosten", { volume: 80, label: "core", relevance: 1 }),
+      ],
+      [
+        serp("plat dak vervangen kosten per m2", ["1", "2", "3", "4", "5", "6"]),
+        serp("wat kost een plat dak vervangen", ["20", "21", "22", "23", "24", "25"]),
+        serp("kosten plat dak vervangen", ["1", "2", "3", "7", "8", "9"]),
+        serp("vervangen plat dak kosten", ["20", "21", "22", "26", "27", "28"]),
+      ],
+    );
+    expect(r.clusters).toHaveLength(1);
+    expect(r.clusters[0]?.members).toHaveLength(4);
+  });
+
+  it("takes a cluster's topic from most of its members, not only its hub", () => {
+    const t = (text: string, topic: string, volume: number) => ({
+      ...q(text, { volume, label: "core", relevance: 1 }),
+      topic,
+    });
+    const r = run(
+      [
+        t("erp handel", "ERP for trade", 300),
+        t("erp groothandel", "ERP for wholesale", 200),
+        t("groothandel software", "ERP for wholesale", 100),
+        t("groothandel erp pakket", "ERP for wholesale", 50),
+      ],
+      [
+        serp("erp handel", ["1", "2", "3", "4", "5", "6"]),
+        serp("erp groothandel", ["20", "21", "22", "23", "24", "25"]),
+        serp("groothandel software", ["1", "2", "3", "7", "8", "9"]),
+        serp("groothandel erp pakket", ["1", "2", "3", "10", "11", "12"]),
+      ],
+    );
+    expect(r.clusters).toHaveLength(1);
+    expect(r.clusters[0]?.members.map((m) => m.query)).toContain("erp groothandel");
+  });
+
   it("never names a cluster after a bridge query", () => {
     const r = run(
       [
