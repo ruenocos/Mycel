@@ -307,6 +307,24 @@ export function planMaps(input: {
       nodes.splice(nodes.indexOf(n), 1);
     }
 
+    // Pages with the same words ("popeye arm", "popeyes arm") are one page: the smaller folds in.
+    const byKey = new Map<string, NodeDraft>();
+    for (const n of [...nodes].sort((a, b) => b.volume - a.volume)) {
+      if (n.isRoot) continue;
+      const key = variantKey(n.mainQuery, language);
+      const keep = byKey.get(key);
+      if (!keep) {
+        byKey.set(key, n);
+        continue;
+      }
+      if (keep.section === "outer" && n.section === "core") keep.section = "core";
+      keep.queries.push(...n.queries.filter((q) => !keep.queries.includes(q)));
+      keep.sections.push(...n.sections);
+      keep.volume += n.volume;
+      keep.gscImpressions += n.gscImpressions;
+      nodes.splice(nodes.indexOf(n), 1);
+    }
+
     // Word rule: the most specific page whose words are all in this page's words is its parent.
     // A core page never sits under an outer page.
     const tok = new Map(nodes.map((n) => [n.id, tokens(n.mainQuery, language)]));
@@ -546,7 +564,13 @@ export function finishMaps(input: {
     const scoreOf = (url: string, id: string) => scores.get(url)?.get(id) ?? { score: 0, h1: 0 };
     let linked: Map<string, string[]>;
     if (nodes.some((n) => labels.get(n.id)?.pages !== undefined)) {
+      // Word matches always count; the model adds what only meaning shows.
       const claims = new Map<string, NodeDraft[]>();
+      for (const [id, urls] of matchPages(nodes, pageList, ctx, scores)) {
+        const n = byId.get(id);
+        if (!n || n.isRoot) continue;
+        for (const url of urls) claims.set(url, [...(claims.get(url) ?? []), n]);
+      }
       for (const n of nodes) {
         if (n.isRoot) continue;
         for (const url of labels.get(n.id)?.pages ?? []) {
@@ -563,7 +587,16 @@ export function finishMaps(input: {
           const s = scoreOf(url, n.id);
           return s.score + s.h1;
         };
-        const best = by.sort((a, b) => rank(b) - rank(a) || b.volume - a.volume)[0] as NodeDraft;
+        // A page claimed by several nodes: the one claimed most (words and model agree), then
+        // the best word score, then the bigger page.
+        const votes = new Map<string, number>();
+        for (const n of by) votes.set(n.id, (votes.get(n.id) ?? 0) + 1);
+        const best = [...new Set(by)].sort(
+          (a, b) =>
+            (votes.get(b.id) ?? 0) - (votes.get(a.id) ?? 0) ||
+            rank(b) - rank(a) ||
+            b.volume - a.volume,
+        )[0] as NodeDraft;
         linked.set(best.id, [...(linked.get(best.id) ?? []), url]);
       }
     } else {

@@ -282,6 +282,21 @@ describe("planMaps", () => {
     expect(nodes[0]?.volume).toBe(9700);
   });
 
+  it("folds pages with the same words into the bigger one", () => {
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [
+        ...clusters.clusters,
+        cluster("verpot2", "outer", [["kamerplanten verpotten", 90]]),
+      ],
+    });
+    const nodes = planMaps({ context, clusters: set }).entities[0]?.nodes ?? [];
+    const verpotten = nodes.filter((n) => n.mainQuery.includes("verpotten"));
+    expect(verpotten.map((n) => n.mainQuery)).toEqual(["kamerplant verpotten"]);
+    expect(verpotten[0]?.queries).toContain("kamerplanten verpotten");
+    expect(verpotten[0]?.volume).toBe(1590);
+  });
+
   it("never puts a core page under an outer page", () => {
     const set = ClusterSet.parse({
       ...clusters,
@@ -365,6 +380,56 @@ describe("mapStep", () => {
     expect(grote.existingPage?.url).toBe("/kamerplanten/grote-kamerplanten/");
     expect(grote.status).toBe("exists_covered");
     expect(node(maps, "kamerplanten").existingPage?.url).toBe("/");
+  });
+
+  it("asks again when the model gives a top-level page no hub", async () => {
+    let calls = 0;
+    const model: JsonModel = {
+      async generateJson(req, schema) {
+        calls++;
+        const user = req.messages[1]?.content ?? "";
+        const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
+          i: number;
+          page: string;
+        }[];
+        return schema.parse({
+          results: list.map((p) => ({
+            i: p.i,
+            why: `Een pagina voor ${p.page}.`,
+            parent: calls === 1 ? null : "root",
+          })),
+        });
+      },
+    };
+    const maps = await runStep(newRun(), mapStep(model), {
+      context,
+      clusters,
+      queries,
+      pages,
+      model: "fake",
+    });
+    expect(calls).toBe(2);
+    expect(node(maps, "kamerplant verpotten").level).toBe("seed");
+  });
+
+  it("keeps word matches when the model links nothing", async () => {
+    const lazy: JsonModel = {
+      async generateJson(req, schema) {
+        const user = req.messages[1]?.content ?? "";
+        const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as { i: number }[];
+        return schema.parse({ results: list.map((p) => ({ i: p.i, parent: "root", pages: [] })) });
+      },
+    };
+    const maps = await runStep(newRun(), mapStep(lazy), {
+      context,
+      clusters,
+      queries,
+      pages,
+      model: "fake",
+    });
+    expect(node(maps, "grote kamerplant kopen").existingPage?.url).toBe(
+      "/kamerplanten/grote-kamerplanten/",
+    );
   });
 
   it("ignores a hub choice that would put a core page under an outer page", async () => {

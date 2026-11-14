@@ -25,14 +25,16 @@ import {
  * meaning, so "XL planten" can be the big-plants page). It never adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "2" } as const;
+export const MAP_TEMPLATE = { id: "map-label", version: "3" } as const;
 
 /**
  * Step logic version (planner + prompt); bump when either changes. 1: first map.
  * 2: brand searches fold into the root; navigational needs a brand; offerings are service pages;
  *    the model links existing pages from weighted word candidates; one voice for "why".
+ * 3: word matches always count, the model adds pages by meaning; a top-level page needs a hub
+ *    answer (asked again); pages with the same words fold together; batches of 15.
  */
-export const MAP_STEP_VERSION = "2";
+export const MAP_STEP_VERSION = "3";
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -79,9 +81,9 @@ export function buildLabelMessages(
     `- "attribute": the attribute of the central entity this page covers, in English, 1 to 4 words (e.g. "price", "for construction firms", "installation"). For the page that is just the entity itself, use "overview".`,
     `- "macroContext": in ${lang}, one sentence that describes the single main angle of the page, so two pages never cover the same thing. Describe it neutrally; don't address anyone.`,
     `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our").`,
-    `- "parent": only for pages marked top-level. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"), or "root" when it belongs directly under "${entity}". Choose a hub only when the page is clearly a narrower part of that hub's topic. A core page never goes under an outer hub. Never pick the page itself.`,
+    `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"), or "root" when it belongs directly under "${entity}". Choose a hub only when the page is clearly a narrower part of that hub's topic. A core page never goes under an outer hub. Never pick the page itself.`,
     withPages
-      ? `- "pages": ids from the existing pages list (e.g. ["p3"]) whose main topic is this page's search: someone searching it would land well on that page. Judge meaning, not shared words: a page about one product or one town is not the page for the general search. Pages listed as "likely" share the most words; confirm them only when the topic truly matches. Usually none or one; list two or more only when several existing pages target this same search. [] when none.`
+      ? `- "pages": ids from the existing pages list (e.g. ["p3"]) whose main topic is this page's search: someone searching it would land well on that page. Judge meaning, not shared words: a page about one product or one town is not the page for the general search. Other words can mean the same (prices = costs = rates, XL = large), so look past the "likely" hints, which only share words. List every existing page that targets this search: two pages on one search is the cannibalisation the owner must see. [] when none.`
       : "",
     `Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","parent":"h3"${withPages ? ',"pages":[]' : ""}}]}. Answer every number exactly once.`,
   ]
@@ -139,7 +141,8 @@ export const MapInput = z.object({
   /** The client's existing pages, to link nodes and flag cannibalisation. */
   pages: z.array(SitePage.pick({ url: true, kind: true, title: true, h1: true })).default([]),
   model: z.string().min(1),
-  batchSize: z.number().int().positive().default(25),
+  /** 15 keeps one call well under the provider timeout when several maps run at once. */
+  batchSize: z.number().int().positive().default(15),
   concurrency: z.number().int().positive().default(3),
 });
 export type MapInput = z.input<typeof MapInput>;
@@ -213,7 +216,9 @@ export async function labelPlan(
     }
   }
   let invalidHubs = 0;
-  const ask = async (w: (typeof work)[number], seed: number) => {
+  let defaultedHubs = 0;
+  /** final: the retry. A top-level page without a valid hub then stays under the root. */
+  const ask = async (w: (typeof work)[number], seed: number, final = false) => {
     const answer = await llm.generateJson(
       {
         model: opts.model,
@@ -231,12 +236,16 @@ export async function labelPlan(
       if (r.attribute?.trim()) label.attribute = r.attribute.trim();
       if (r.macroContext?.trim()) label.macroContext = r.macroContext.trim();
       if (r.why?.trim()) label.why = r.why.trim();
-      if (!n.isRoot && !n.parentId && r.parent) {
-        const pick = r.parent.trim();
-        const hub = pick === "root" ? undefined : w.hubs[Number(pick.replace(/^h/, ""))];
+      if (!n.isRoot && !n.parentId) {
+        const pick = r.parent?.trim() ?? "";
+        const hub = /^h\d+$/.test(pick) ? w.hubs[Number(pick.slice(1))] : undefined;
         if (pick === "root") label.parent = "root";
         else if (hub && hub.id !== n.id) label.parent = hub.id;
-        else invalidHubs++;
+        else if (!final) {
+          // No usable hub: ask again rather than silently leave it under the root.
+          if (pick) invalidHubs++;
+          continue;
+        } else defaultedHubs++;
       }
       if (w.site.pages.length && !n.isRoot) {
         const urls = (r.pages ?? []).map((id) => w.urlOf.get(id.trim()));
@@ -254,7 +263,7 @@ export async function labelPlan(
     ctx.log.warn("model skipped pages, asking again", {
       count: missing.reduce((s, w) => s + w.batch.length, 0),
     });
-    await pool(missing, opts.concurrency, (w) => ask(w, 12));
+    await pool(missing, opts.concurrency, (w) => ask(w, 12, true));
   }
   const unlabeled = work.flatMap((w) => w.batch).filter((n) => !labels.has(n.id));
   if (unlabeled.length) {
@@ -266,8 +275,9 @@ export async function labelPlan(
         .join(", ")}`,
     );
   }
-  if (invalidHubs)
-    ctx.log.warn("model picked hubs that don't exist; page stays top-level", { invalidHubs });
+  if (invalidHubs) ctx.log.warn("model picked hubs that don't exist; asked again", { invalidHubs });
+  if (defaultedHubs)
+    ctx.log.warn("no hub after a retry; page stays under the root", { defaultedHubs });
   if (invalidPages) ctx.log.warn("model named existing pages that don't exist", { invalidPages });
   return labels;
 }
