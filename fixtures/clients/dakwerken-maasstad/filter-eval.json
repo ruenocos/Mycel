@@ -1,0 +1,33 @@
+{
+  "client": "dakwerken-maasstad",
+  "cases": [
+    { "query": "dakdekker rotterdam", "expect": "keep", "why": "the core local service" },
+    { "query": "daklekkage rotterdam", "expect": "keep", "why": "core service in the city" },
+    { "query": "plat dak vervangen", "expect": "keep", "why": "offering" },
+    { "query": "epdm dakbedekking", "expect": "keep", "why": "offering" },
+    { "query": "dakgoot vervangen", "expect": "keep", "why": "offering" },
+    {
+      "query": "kosten plat dak vervangen per m2",
+      "expect": "keep",
+      "why": "price question for an offering"
+    },
+    { "query": "daklekkage oorzaak", "expect": "keep", "why": "problem a future customer has" },
+    { "query": "verschil epdm en bitumen", "expect": "keep", "why": "comparison before buying" },
+    { "query": "dakdekker schiedam", "expect": "keep", "why": "inside the service area" },
+    {
+      "query": "dakisolatie subsidie",
+      "expect": "keep",
+      "why": "cost question around an offering"
+    },
+    { "query": "vacature dakdekker", "expect": "drop", "why": "jobs" },
+    { "query": "opleiding dakdekker", "expect": "drop", "why": "education" },
+    { "query": "dakkapel plaatsen", "expect": "drop", "why": "not offered" },
+    { "query": "zonnepanelen kopen", "expect": "drop", "why": "not offered" },
+    { "query": "dakdekker amsterdam", "expect": "drop", "why": "outside the service area" },
+    { "query": "dak van de wereld", "expect": "drop", "why": "other meaning (Tibet)" },
+    { "query": "dakterras inrichten", "expect": "drop", "why": "interior, not roofing" },
+    { "query": "werkspot dakdekker", "expect": "drop", "why": "navigational for a platform" },
+    { "query": "daken minecraft", "expect": "drop", "why": "game" },
+    { "query": "dakdekker groningen", "expect": "drop", "why": "outside the service area" }
+  ]
+}

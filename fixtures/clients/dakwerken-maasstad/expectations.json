@@ -1,0 +1,26 @@
+{
+  "expectedCore": [
+    "dakdekker rotterdam",
+    "daklekkage rotterdam",
+    "plat dak vervangen",
+    "epdm dakbedekking",
+    "dakgoot vervangen"
+  ],
+  "expectedOuter": [
+    "daklekkage oorzaak",
+    "levensduur bitumen dak",
+    "verschil epdm en bitumen",
+    "dakpannen vervangen zelf"
+  ],
+  "plantedConflict": {
+    "urls": ["/kosten/", "/blog/kosten-plat-dak-vervangen/"],
+    "sharedIntent": "kosten plat dak vervangen"
+  },
+  "offTopic": [
+    "vacature dakdekker",
+    "dakkapel plaatsen",
+    "zonnepanelen kopen",
+    "dakdekker amsterdam",
+    "dak van de wereld"
+  ]
+}
