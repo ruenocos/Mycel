@@ -1,5 +1,6 @@
 import type { FilteredQuery, GateExpectations, MapNode, SiteMaps } from "@mycel/schema";
 import { variantKey } from "../cluster/cluster.ts";
+import { SHAPE } from "./rules.ts";
 
 /**
  * The machine half of the phase 2 gate (ADR 0011) for a test client: the money queries land in
@@ -36,9 +37,6 @@ function where(maps: SiteMaps, query: string, language: string): MapNode | undef
   }
   return undefined;
 }
-
-/** Shape thresholds: the hub count follows the business, so the gate checks ratios instead. */
-export const SHAPE = { maxChildlessShare: 0.2, maxChildren: 40, minSiteHubsKept: 0.9 } as const;
 
 export interface MapShape {
   hubs: number;

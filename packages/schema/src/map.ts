@@ -48,7 +48,10 @@ export const MapNode = z.object({
    * "theme": a new hub page that groups pages sharing one theme.
    */
   hub: z.enum(["site", "theme"]).optional(),
-  /** Display name: a site hub's own page heading, e.g. "Projectplanning". */
+  /**
+   * Display name in the market language, for people: a site hub's own page heading
+   * ("Projectplanning"), else a short title the model wrote from the main search.
+   */
   name: z.string().min(1).optional(),
   /** Koray raw node: entity + attribute, e.g. ERP + bouwbedrijven. */
   rawNode: z.object({ entity: z.string().min(1), attribute: z.string().min(1) }),
@@ -79,8 +82,16 @@ export const MapNode = z.object({
       gscImpressions: z.number().int().nonnegative().optional(),
     })
     .default({}),
-  /** 1 = do first. From relevance x business value x demand. */
+  /** 1 = do first. The first plan ("now") holds 1-3, later work 4-5, pages that are fine 5. */
   priority: z.number().int().min(1).max(5),
+  /**
+   * What to do with this page. keep: an existing page that already covers it. improve: an
+   * existing page that only partly covers it. resolve: existing pages compete for it (see
+   * conflict). create: a new page.
+   */
+  action: z.enum(["keep", "improve", "resolve", "create"]),
+  /** In the first plan, or later. Absent for pages to keep as they are. */
+  wave: z.enum(["now", "later"]).optional(),
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
   linksOut: z.array(LinkOut).default([]),
   /** Null when no SERP was fetched for this node. */
@@ -102,12 +113,25 @@ export const MapHeader = z.object({
 });
 export type MapHeader = z.infer<typeof MapHeader>;
 
+/** A search the model judged not to belong in this business's map, with the reason. */
+export const LeftOut = z.object({
+  mainQuery: z.string().min(1),
+  volume: z.number().int().nonnegative().default(0),
+  reason: z.enum(["other_business", "place_not_served", "off_offer"]),
+});
+export type LeftOut = z.infer<typeof LeftOut>;
+
 /**
  * One topical map. The refinements are the deterministic layer-1 quality checks
  * from the plan: unique ids, valid references, every outer node links to a core node.
  */
 export const TopicalMap = z
-  .object({ header: MapHeader, nodes: z.array(MapNode).min(1) })
+  .object({
+    header: MapHeader,
+    nodes: z.array(MapNode).min(1),
+    /** Searches left out of the map, shown so the owner can put one back. */
+    leftOut: z.array(LeftOut).default([]),
+  })
   .superRefine((map, ctx) => {
     const ids = new Set<string>();
     for (const [i, n] of map.nodes.entries()) {
@@ -163,5 +187,9 @@ export type TopicalMap = z.infer<typeof TopicalMap>;
 export const SiteMaps = z.object({
   site: z.string().min(1),
   maps: z.array(TopicalMap).min(1),
+  /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
+  outside: z
+    .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))
+    .default([]),
 });
 export type SiteMaps = z.infer<typeof SiteMaps>;

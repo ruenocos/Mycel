@@ -27,12 +27,14 @@ import {
 
 /**
  * The fake model labels every page and leaves hubs at the root; asked to link existing pages,
- * it picks each page's first likely map page, else "none".
+ * it picks each page's first likely map page, else "none". It groups nothing and leaves
+ * conflicts to the rule-based advice.
  */
 function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   const fake = new FakeProvider([], (req) => {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
     if (user.includes("\nPages under ")) return JSON.stringify({ groups: [] });
+    if (user.includes("\nConflicts:\n")) return JSON.stringify({ results: [] });
     if (user.includes("\nMap pages:\n")) {
       const existing = JSON.parse(user.split("\nExisting pages:\n")[1] ?? "[]") as {
         p: number;

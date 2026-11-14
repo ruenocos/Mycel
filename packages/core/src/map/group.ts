@@ -5,23 +5,20 @@ import type { JsonModel } from "../context/llm.ts";
 import { languageName } from "../evals/writing.ts";
 import type { StepContext } from "../log/run-store.ts";
 import { pool } from "../research/collect.ts";
-import { type MapPlan, type NodeDraft, type NodeLabel, resolveParents, slugify } from "./build.ts";
+import { resolveParents } from "./finish.ts";
+import type { MapPlan, NodeDraft, NodeLabel } from "./plan.ts";
+import { GROUP } from "./rules.ts";
+import { slugify } from "./urls.ts";
 
 /**
  * Round 6 (issue #19): too many pages under one parent is a list, not a structure. When home has
- * many loose top-level pages, or a hub has more than MAX_CHILDREN pages directly under it, the
+ * many loose top-level pages, or a hub has more than GROUP.maxChildren (rules.ts) pages directly under it, the
  * model groups them by theme. A group's head is one of the listed pages that naturally covers
  * the others, or a new hub page with a short name. Data still decides which pages exist; the
  * model only proposes the grouping, and a group needs at least 3 members.
  */
 
 export const GROUP_TEMPLATE = { id: "map-group", version: "1" } as const;
-
-/** More pages than this directly under one hub get grouped into sub-hubs. */
-export const MAX_CHILDREN = 40;
-/** Home gets grouped when it has at least this many top-level pages that aren't site hubs. */
-export const MIN_LOOSE = 8;
-const MIN_MEMBERS = 3;
 
 export const GroupAnswer = z.object({
   groups: z.array(
@@ -49,7 +46,7 @@ export function buildGroupMessages(
     `You organise part of a topical map about "${entity}" for one business. These pages all sit directly under "${parentName}": too many to navigate.`,
     "Group pages that share one theme, the way a visitor would look for them: a buying choice (by size, budget, use), one sub-type or family, one problem, gifts and delivery, costs and insurance. Judge meaning, never shared words alone.",
     `A group's "head" is one of the listed pages that naturally covers the others (its id, e.g. "p3"). When none does, leave head empty and give "name": a short hub page name in ${lang}, in the words people search with, and "why": one plain sentence in ${lang} for the business owner on why this hub page helps (informal singular "you", no jargon).`,
-    `Each group needs at least ${MIN_MEMBERS} members besides its head. A page belongs to at most one group. Leave a page out of every group when it is a main topic of its own. A core page never goes in a group whose head is an outer page.`,
+    `Each group needs at least ${GROUP.minMembers} members besides its head. A page belongs to at most one group. Leave a page out of every group when it is a main topic of its own. A core page never goes in a group whose head is an outer page.`,
     'Answer with JSON: {"groups":[{"head":"p3","members":["p1","p7","p9"]},{"name":"...","why":"...","members":["p2","p4","p5"]}]}',
   ].join("\n");
   const list = pages.map((n, i) => ({
@@ -95,11 +92,12 @@ export async function groupPages(
       children.set(p, [...(children.get(p) ?? []), byId.get(id) as NodeDraft]);
     }
     const tasks: { under: NodeDraft; pages: NodeDraft[] }[] = [];
-    const loose = (children.get(root.id) ?? []).filter((n) => !n.hub);
-    if (loose.length >= MIN_LOOSE) tasks.push({ under: root, pages: loose });
+    const keep = (n: NodeDraft) => !n.hub && !labels.get(n.id)?.drop;
+    const loose = (children.get(root.id) ?? []).filter(keep);
+    if (loose.length >= GROUP.minLoose) tasks.push({ under: root, pages: loose });
     for (const [id, kids] of children) {
-      if (id !== root.id && kids.length > MAX_CHILDREN) {
-        tasks.push({ under: byId.get(id) as NodeDraft, pages: kids.filter((k) => !k.hub) });
+      if (id !== root.id && kids.length > GROUP.maxChildren) {
+        tasks.push({ under: byId.get(id) as NodeDraft, pages: kids.filter(keep) });
       }
     }
     const grouping: Grouping = { themes: [], parents: new Map() };
@@ -125,7 +123,7 @@ export async function groupPages(
         const members = [...new Set(g.members.map(pick).filter((n): n is NodeDraft => !!n))].filter(
           (n) => n !== head && !grouping.parents.has(n.id),
         );
-        if (members.length < MIN_MEMBERS || (!head && !g.name?.trim())) {
+        if (members.length < GROUP.minMembers || (!head && !g.name?.trim())) {
           dropped++;
           continue;
         }
@@ -182,6 +180,7 @@ function themeNode(
     isRoot: false,
     section: core ? "core" : "outer",
     mainQuery: name,
+    name,
     queries: [],
     sections: [],
     volume: 0,

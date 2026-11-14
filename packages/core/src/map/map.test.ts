@@ -15,20 +15,22 @@ import { describe, expect, it } from "vitest";
 import type { JsonModel } from "../context/llm.ts";
 import { RunStore } from "../log/run-store.ts";
 import { runStep } from "../step.ts";
+import { finishMaps, shouldFold } from "./finish.ts";
+import { checkGate, mapShape, shapeChecks } from "./gate.ts";
+import type { LabelAnswer } from "./label.ts";
+import { buildLinkMessages, type LinkAnswer } from "./link.ts";
 import {
-  finishMaps,
-  isSectionPage,
-  matchPages,
+  dedupedVolume,
   type NodeLabel,
   ownBrand,
-  type PageRef,
   pageIntent,
   planMaps,
-  slugify,
-} from "./build.ts";
-import { checkGate, mapShape, shapeChecks } from "./gate.ts";
-import { type LabelAnswer, mapStep } from "./label.ts";
-import { buildLinkMessages, type LinkAnswer, linkablePages } from "./link.ts";
+  searchKey,
+  searchKeys,
+} from "./plan.ts";
+import { anchorSiteHubs, isSectionPage, linkablePages, matchPages, type PageRef } from "./site.ts";
+import { mapStep } from "./step.ts";
+import { slugify } from "./urls.ts";
 
 const fixture = (file: string) =>
   JSON.parse(readFileSync(join(__dirname, "../../../../fixtures/clients/plantpost", file), "utf8"));
@@ -136,6 +138,8 @@ function stub(
   links: Record<string, string> = { "/kamerplanten/xl-planten/": "grote kamerplant kopen" },
   also: Record<string, string> = {},
   group: (pages: { id: string; page: string }[]) => unknown = () => ({ groups: [] }),
+  label: Record<string, Partial<LabelAnswer["results"][number]>> = {},
+  conflicts: (list: { c: number; search: string }[]) => unknown = () => ({ results: [] }),
 ): JsonModel & { calls: number; prompts: string[] } {
   const model = {
     calls: 0,
@@ -148,6 +152,9 @@ function stub(
       const user = req.messages[1]?.content ?? "";
       model.prompts.push(user);
       if (user.includes("\nMap pages:\n")) return schema.parse(answerLinks(user, links, also));
+      if (user.includes("\nConflicts:\n")) {
+        return schema.parse(conflicts(JSON.parse(user.split("\nConflicts:\n")[1] ?? "[]")));
+      }
       if (user.includes("\nPages under ")) {
         const list = JSON.parse(user.split(":\n").slice(-1)[0] ?? "[]") as {
           id: string;
@@ -171,6 +178,7 @@ function stub(
           macroContext: `Over ${p.page}`,
           why: `Een eigen pagina voor ${p.page}.`,
           ...(p.topLevel && hub ? { parent: hub } : {}),
+          ...label[p.page],
         };
       });
       return schema.parse({ results });
@@ -240,6 +248,11 @@ describe("slugify", () => {
   it("strips diacritics and joins words", () => {
     expect(slugify("Café kamerplant: wat kost één?")).toBe("cafe-kamerplant-wat-kost-een");
   });
+  it("cuts a long slug at a word, never inside one", () => {
+    const s = slugify("bedrijfsadministratie met erp in microsoft dynamics 365 business central");
+    expect(s.length).toBeLessThanOrEqual(60);
+    expect(s).toBe("bedrijfsadministratie-met-erp-in-microsoft-dynamics-365");
+  });
 });
 
 describe("pageIntent", () => {
@@ -280,6 +293,15 @@ describe("pageIntent", () => {
     });
     expect(pageIntent(info, [], "core", { offering: true, local: true }).main).toBe("local");
   });
+  it("never makes a question a service page, and drops place votes that name no place", () => {
+    const info = [{ intent: "informational", volume: 900 }];
+    expect(pageIntent(info, [], "core", { offering: true, question: true }).main).toBe(
+      "informational",
+    );
+    const nav = [{ intent: "navigational", volume: 100 }];
+    expect(pageIntent(nav, [], "core", { local: true, place: false }).source).toBe("tier");
+    expect(pageIntent(nav, [], "core", { local: true, place: true }).main).toBe("local");
+  });
   it("uses results-page features, then the tier", () => {
     expect(pageIntent([], ["shopping"], "outer").main).toBe("transactional");
     expect(pageIntent([], [], "core")).toEqual({
@@ -287,6 +309,49 @@ describe("pageIntent", () => {
       mixed: false,
       source: "tier",
     });
+  });
+});
+
+describe("one search, one page", () => {
+  it("treats spelling, compound and word-order variants and the market city as one search", () => {
+    const same = (a: string, b: string, city?: string) =>
+      searchKeys(a, "nl", city).some((k) => searchKeys(b, "nl", city).includes(k));
+    expect(same("citroen plant", "citroenplant")).toBe(true);
+    expect(same("olijfboom", "olijf boom")).toBe(true);
+    expect(same("kamerplanten verpotten", "kamerplant verpotten")).toBe(true);
+    expect(same("kamerplant kopen", "kamerplant verpotten")).toBe(false);
+    expect(searchKey("kosten fysiotherapie", "nl")).toBe(searchKey("fysiotherapie kosten", "nl"));
+    expect(searchKey("sportfysiotherapie utrecht", "nl", "Utrecht")).toBe(
+      searchKey("sportfysiotherapie", "nl", "Utrecht"),
+    );
+    expect(searchKey("utrecht", "nl", "Utrecht")).not.toBe("");
+  });
+
+  it("counts variants that report the same volume once", () => {
+    const c = {
+      members: [
+        { ...member("dakdekker", 9900) },
+        { ...member("dakdekkers", 9900) },
+        { ...member("dakdekker rotterdam", 1000) },
+      ],
+      demand: { volume: 20800, gscImpressions: 0 },
+    };
+    expect(dedupedVolume(c, "nl")).toBe(10900);
+  });
+
+  it("folds a page for the same search spelled apart into the bigger one", () => {
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [
+        ...clusters.clusters,
+        cluster("citroen1", "outer", [["citroenplant", 500]]),
+        cluster("citroen2", "outer", [["citroen plant", 500]]),
+      ],
+    });
+    const nodes = planMaps({ context, clusters: set }).entities[0]?.nodes ?? [];
+    const citroen = nodes.filter((n) => n.mainQuery.startsWith("citroen"));
+    expect(citroen).toHaveLength(1);
+    expect(citroen[0]?.volume).toBe(500);
   });
 });
 
@@ -334,6 +399,7 @@ describe("planMaps", () => {
     const verpotten = nodes.filter((n) => n.mainQuery.includes("verpotten"));
     expect(verpotten.map((n) => n.mainQuery)).toEqual(["kamerplant verpotten"]);
     expect(verpotten[0]?.queries).toContain("kamerplanten verpotten");
+    // Different volumes: two buckets at the data provider, so they add up.
     expect(verpotten[0]?.volume).toBe(1590);
   });
 
@@ -429,7 +495,9 @@ describe("mapStep", () => {
     const model: JsonModel = {
       async generateJson(req, schema) {
         const user = req.messages[1]?.content ?? "";
-        if (user.includes("\nMap pages:\n")) return schema.parse({ results: [] });
+        if (user.includes("\nMap pages:\n") || user.includes("\nConflicts:\n")) {
+          return schema.parse({ results: [] });
+        }
         calls++;
         const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
           i: number;
@@ -466,7 +534,7 @@ describe("mapStep", () => {
     expect(grote.conflict).toBeFalsy();
   });
 
-  it("puts a new outer page in its seed's folder", async () => {
+  it("puts a new article in the site's own article folder", async () => {
     const maps = await runStep(
       newRun(),
       mapStep(
@@ -479,7 +547,7 @@ describe("mapStep", () => {
     );
     const gele = node(maps, "gele bladeren kamerplant");
     expect(gele.existingPage).toBeNull();
-    expect(gele.proposedUrl).toBe("/kamerplant-verpotten/gele-bladeren-kamerplant/");
+    expect(gele.proposedUrl).toBe("/verzorging/gele-bladeren-kamerplant/");
   });
 
   it("offers the site's own sections first as hubs, marked, and never asks to move them", async () => {
@@ -628,6 +696,123 @@ describe("mapStep", () => {
     await expect(
       runStep(newRun(), mapStep(lazy), { context, clusters, queries, pages, model: "fake" }),
     ).rejects.toThrow(/unlabeled after a retry/);
+  });
+});
+
+describe("round 7: usable output", () => {
+  it("leaves out pages the model says don't belong, lists them, and moves their pages up", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub({ "gele bladeren kamerplant": "kamerplant verpotten" }, undefined, {}, undefined, {
+          "kamerplant verpotten": { drop: "off_offer" },
+          "kamerplanten kopen": { drop: "other_business" },
+        }),
+      ),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    const map = maps.maps[0] as SiteMaps["maps"][number];
+    // An existing page always stays: "kamerplant verpotten" has one.
+    expect(map.nodes.some((n) => n.mainQuery === "kamerplant verpotten")).toBe(true);
+    expect(map.nodes.some((n) => n.mainQuery === "kamerplanten kopen")).toBe(false);
+    expect(map.leftOut).toContainEqual({
+      mainQuery: "kamerplanten kopen",
+      volume: 4900,
+      reason: "other_business",
+    });
+    expect(TopicalMap.safeParse(map).success).toBe(true);
+  });
+
+  it("gives every page a display name, an action and a wave", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub({}, undefined, {}, undefined, {
+          "kamerplanten kopen": { name: "Kamerplanten kopen" },
+        }),
+      ),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    const kopen = node(maps, "kamerplanten kopen");
+    expect(kopen.name).toBe("Kamerplanten kopen");
+    expect(kopen.action).toBe("create");
+    expect(kopen.wave).toBe("now");
+    // A site hub keeps its own page's heading over the model's title.
+    expect(node(maps, "grote kamerplant kopen").name).toBe(
+      pages.find((p) => p.url === "/kamerplanten/grote-kamerplanten/")?.h1,
+    );
+    expect(node(maps, "kamerplant verpotten")).toMatchObject({ action: "keep", priority: 5 });
+    expect(node(maps, "grote kamerplant kopen")).toMatchObject({ action: "resolve", wave: "now" });
+  });
+
+  it("lists existing pages that serve no map page as outside the map", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(stub({}, { "/verzorging/gele-bladeren/": "none" })),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    const urls = maps.outside.map((p) => p.url);
+    expect(urls).not.toContain("/");
+    expect(urls).not.toContain("/verzorging/kamerplant-verpotten/");
+    for (const p of pages.filter((x) => x.kind === "about" || x.kind === "contact")) {
+      expect(urls).not.toContain(p.url);
+    }
+  });
+
+  it("lets the model judge a conflict: two different pages are told apart", async () => {
+    const maps = await runStep(
+      newRun(),
+      mapStep(
+        stub({}, undefined, {}, undefined, {}, (list) => ({
+          results: list.map((x) => ({ c: x.c, suggestion: "differentiate" })),
+        })),
+      ),
+      { context, clusters, queries, pages, model: "fake" },
+    );
+    expect(node(maps, "grote kamerplant kopen").conflict?.suggestion).toBe("differentiate");
+  });
+
+  it("folds pages almost nobody searches for, unless clicks are costly", () => {
+    const base = {
+      id: "x",
+      entity: "e",
+      isRoot: false,
+      section: "core" as const,
+      mainQuery: "x",
+      queries: [],
+      sections: [],
+      gscImpressions: 0,
+      intent: { main: "commercial" as const, mixed: false, source: "data" as const },
+      aiOverview: null,
+      qdpWhy: "x",
+    };
+    expect(shouldFold({ ...base, volume: 0, cpc: 9 })).toBe(true);
+    expect(shouldFold({ ...base, volume: 10 })).toBe(true);
+    expect(shouldFold({ ...base, volume: 10, cpc: 4 })).toBe(false);
+    expect(shouldFold({ ...base, volume: 15 })).toBe(false);
+    expect(
+      shouldFold({
+        ...base,
+        section: "outer",
+        volume: 15,
+        intent: { main: "informational", mixed: false, source: "data" },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a section page no search covers as a hub without demand", () => {
+    const plan = planMaps({ context, clusters, queries });
+    const sector: PageRef = {
+      url: "/kamerplanten/vetplanten/",
+      kind: "category",
+      title: "Vetplanten | Plantpost",
+      h1: "Vetplanten",
+    };
+    const { hubs, links } = anchorSiteHubs(plan, [...pages, sector], new Map([[sector.url, null]]));
+    const id = links.get(sector.url) as string;
+    const hub = plan.entities[0]?.nodes.find((n) => n.id === id);
+    expect(hub).toMatchObject({ hub: "site", name: "Vetplanten", volume: 0, section: "core" });
+    expect(hubs.get("kamerplant")).toContain(id);
   });
 });
 

@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { JsonModel } from "../context/llm.ts";
 import type { StepContext } from "../log/run-store.ts";
 import { pool } from "../research/collect.ts";
-import { type MapPlan, type NodeDraft, type PageRef, scorePages } from "./build.ts";
+import type { MapPlan, NodeDraft } from "./plan.ts";
+import { READABLE_KINDS } from "./rules.ts";
+import { linkablePages, type PageRef, scorePages } from "./site.ts";
 
 /**
  * Step 15 (issue #19): link the client's existing pages to the map, page by page. Each existing
@@ -29,12 +31,6 @@ export const LinkAnswer = z.object({
   ),
 });
 export type LinkAnswer = z.infer<typeof LinkAnswer>;
-
-const SKIP = new Set(["home", "about", "contact"]);
-
-/** Existing pages the model judges: everything but the homepage, about and contact pages. */
-export const linkablePages = (pages: PageRef[]) =>
-  pages.filter((p) => p.url !== "/" && !SKIP.has(p.kind));
 
 export function buildLinkMessages(
   ctx: ClientContext,
@@ -121,7 +117,7 @@ export async function linkPages(
         const item = batch[r.p];
         if (!item || got.has(item.page.url)) continue;
         const kind = r.kind?.trim().toLowerCase();
-        if (item.page.kind === "other" && kind && KINDS.has(kind as PageRef["kind"])) {
+        if (item.page.kind === "other" && kind && READABLE_KINDS.has(kind as PageRef["kind"])) {
           kinds.set(item.page.url, kind as PageRef["kind"]);
         }
         const pick = r.node?.trim() ?? "";
@@ -160,18 +156,6 @@ export async function linkPages(
   }
   return { links: out, also, kinds };
 }
-
-/** Kinds the model may give an untyped page. */
-const KINDS = new Set<PageRef["kind"]>([
-  "service",
-  "category",
-  "location",
-  "product",
-  "pricing",
-  "blog",
-  "guide",
-  "other",
-]);
 
 export interface PageLinks {
   /** Existing page URL → the node it serves, or null for none. */

@@ -30,6 +30,8 @@ const node = (over: Partial<MapNode> & Pick<MapNode, "id">): MapNode => ({
   existingPage: null,
   demand: {},
   priority: 2,
+  action: "create",
+  wave: "now",
   flags: { quality: false, trending: false },
   linksOut: [],
   aiOverview: null,

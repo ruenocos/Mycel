@@ -107,7 +107,7 @@ export const ClusterSet = z
       }
       if (c.hostClusterId) {
         const host = ids.get(c.hostClusterId);
-        if (!host || host.qdp !== "page") {
+        if (host?.qdp !== "page") {
           ctx.addIssue({
             code: "custom",
             message: `host ${c.hostClusterId} must be a page cluster`,

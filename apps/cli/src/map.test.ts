@@ -93,7 +93,12 @@ describe("mycel map", () => {
       "/verzorging/kamerplant-verpotten/",
     );
     const text = res.lines.join("\n");
-    expect(text).toContain("map         kamerplant: 4 pages, 3 core, 1 outer");
+    // 4 pages from the clusters, plus the site's sections no search covers: hubs without demand.
+    expect(text).toContain("map         kamerplant: 9 pages, 8 core, 1 outer");
+    const quiet = nodes.filter((n) => n.hub === "site" && !n.demand.volume);
+    expect(quiet.length).toBeGreaterThan(0);
+    expect(quiet.every((n) => n.name && n.existingPage)).toBe(true);
+    expect(maps.outside.some((p) => p.url === "/")).toBe(false);
     expect(text).toContain("note        no queries.json: intent falls back to the tier");
     // Three clusters can't pass the plantpost gate (most expected queries have no data, and
     // the XL page shares no query with any node): the run says so and fails.

@@ -117,7 +117,7 @@ export const ClusterOptions = z.object({
 });
 export type ClusterOptions = z.infer<typeof ClusterOptions>;
 
-const STOPWORDS: Record<string, Set<string>> = {
+export const STOPWORDS: Record<string, Set<string>> = {
   nl: new Set(["de", "het", "een", "en", "van", "voor", "in", "op", "met", "te", "s", "je", "jij"]),
   en: new Set(["the", "a", "an", "and", "of", "for", "in", "on", "with", "to", "s"]),
 };

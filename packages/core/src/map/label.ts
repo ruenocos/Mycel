@@ -1,49 +1,28 @@
-import { ClientContext, ClusterSet, FilteredQuery, SiteMaps, SitePage } from "@mycel/schema";
+import type { ClientContext } from "@mycel/schema";
 import { z } from "zod";
 import type { JsonModel } from "../context/llm.ts";
 import { languageName } from "../evals/writing.ts";
 import type { StepContext } from "../log/run-store.ts";
 import { pool } from "../research/collect.ts";
-import { defineStep } from "../step.ts";
 import {
-  anchorSiteHubs,
-  finishMaps,
+  type FitReason,
   hubChoices,
   type MapPlan,
   type NodeDraft,
   type NodeLabel,
-  planMaps,
-} from "./build.ts";
-import { groupPages } from "./group.ts";
-import { linkPages } from "./link.ts";
+} from "./plan.ts";
+import { MAX_HUBS } from "./rules.ts";
+import { type PageRef, pageTitle } from "./site.ts";
 
 /**
- * Step 11-14 and 20, the model half (issue #19). Data already fixed the pages, tiers, intent and
+ * Steps 11-14, the model's labels (issue #19). Data already fixed the pages, tiers, intent and
  * most of the hierarchy. The model only adds what words and numbers can't: the raw node's
- * attribute, one macro context per page, a plain "why", and a hub for top-level pages whose words
- * don't nest under another page. Existing pages are linked in a second pass (link.ts). It never
- * adds pages, queries or numbers.
+ * attribute, one macro context per page, a plain "why", a display name, whether the page belongs
+ * in this business's map at all, and a hub for top-level pages whose words don't nest under
+ * another page. It never adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "5" } as const;
-
-/**
- * Step logic version (planner + prompt); bump when either changes. 1: first map.
- * 2: brand searches fold into the root; navigational needs a brand; offerings are service pages;
- *    the model links existing pages from weighted word candidates; one voice for "why".
- * 3: word matches always count, the model adds pages by meaning; a top-level page needs a hub
- *    answer (asked again); pages with the same words fold together; batches of 15.
- * 4: existing pages are linked page by page (each picks the map page it serves, link.ts);
- *    outer URLs sit under their seed's slug.
- * 5: the site's own service, category and location pages are locked hubs; top-level pages pick
- *    a hub by meaning (site hubs first, "root" only for a main pillar); small childless outer
- *    pages become sections of their hub; a page competing for a second node ("also") is a
- *    differentiate conflict.
- * 6: the model reads untyped pages' kinds while linking (map-link v3); site hubs carry their
- *    page's name; folding keeps buying-intent and costly-click pages; loose top-level pages and
- *    hubs over 40 children are grouped by theme (map-group v1).
- */
-export const MAP_STEP_VERSION = "6";
+export const MAP_TEMPLATE = { id: "map-label", version: "6" } as const;
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -52,6 +31,10 @@ export const LabelAnswer = z.object({
       attribute: z.string().max(60).nullish(),
       macroContext: z.string().max(240).nullish(),
       why: z.string().max(300).nullish(),
+      /** A short page title in the market language. */
+      name: z.string().max(80).nullish(),
+      /** Only when the page doesn't belong in this business's map. */
+      drop: z.enum(["other_business", "place_not_served", "off_offer"]).nullish(),
       /** Only for top-level pages: a hub id ("h3") or "root". */
       parent: z.string().max(20).nullish(),
     }),
@@ -59,15 +42,13 @@ export const LabelAnswer = z.object({
 });
 export type LabelAnswer = z.infer<typeof LabelAnswer>;
 
-/** Most hubs offered per prompt: site hubs, then core, then demand. Enough for every map so far. */
-const MAX_HUBS = 120;
-
 export function buildLabelMessages(
   ctx: ClientContext,
   entity: string,
   batch: NodeDraft[],
   hubs: NodeDraft[],
   byId: Map<string, NodeDraft>,
+  locations: string[] = [],
 ) {
   const lang = languageName(ctx.market.language);
   const hubKey = new Map(hubs.map((h, i) => [h.id, `h${i}`]));
@@ -76,9 +57,11 @@ export function buildLabelMessages(
     "For each numbered page give:",
     `- "attribute": the attribute of the central entity this page covers, in English, 1 to 4 words (e.g. "price", "for construction firms", "installation"). For the page that is just the entity itself, use "overview".`,
     `- "macroContext": in ${lang}, one sentence that describes the single main angle of the page, so two pages never cover the same thing. Describe it neutrally; don't address anyone.`,
-    `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our").`,
+    `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our"). State only facts from the profile and the page data: never say the business has a location, price, service or experience the profile doesn't list.`,
+    `- "name": in ${lang}, a short title for the page (2 to 6 words) as a visitor would read it in a menu or heading: natural word order and correct spelling, not the raw search ("Citroenplant", not "citroen plant kopen online"). Keep a term of art as people write it ("Business Central").`,
+    `- "drop": leave it out unless the page clearly doesn't belong in this business's map. Then give one reason: "other_business" (the search is for another named business, brand, website or person), "place_not_served" (it names a town, neighbourhood or street where the business has no location; the profile lists its market and locations), "off_offer" (it has nothing to do with what the business offers or what its customers ask: a general term from another field, a do-it-yourself or retail product search for a service business). When unsure, leave it out.`,
     `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"). Hubs marked "site" are sections the business's website already has (a service, product category or location): prefer them whenever the page is part of that topic, so new pages slot into the existing site. Choose "root" (directly under "${entity}") only when the page is itself a main pillar of the business, a main service, product category or theme that other pages will hang under; a page about one question, one detail or one variant is never root. A core page never goes under an outer hub. Never pick the page itself.`,
-    'Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","parent":"h3"}]}. Answer every number exactly once.',
+    'Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","name":"...","parent":"h3"}]}. Answer every number exactly once.',
   ].join("\n");
   const profile = {
     business: ctx.site.name,
@@ -88,6 +71,7 @@ export function buildLabelMessages(
     centralSearchIntent: ctx.centralSearchIntent,
     offerings: ctx.offerings,
     audiences: ctx.audiences,
+    ...(locations.length ? { locations } : {}),
   };
   const pages = batch.map((n, i) => ({
     i,
@@ -120,41 +104,19 @@ export function buildLabelMessages(
   ];
 }
 
-export const MapInput = z.object({
-  context: ClientContext,
-  clusters: ClusterSet,
-  /** Kept queries from the filter: intent and CPC per query. Optional; without them intent falls back to the tier. */
-  queries: z.array(FilteredQuery).default([]),
-  /** The client's existing pages, to link nodes and flag cannibalisation. */
-  pages: z.array(SitePage.pick({ url: true, kind: true, title: true, h1: true })).default([]),
-  model: z.string().min(1),
-  /** 15 keeps one call well under the provider timeout when several maps run at once. */
-  batchSize: z.number().int().positive().default(15),
-  concurrency: z.number().int().positive().default(3),
-});
-export type MapInput = z.input<typeof MapInput>;
-
-/** Wraps the step context so the step can report its own model cost in the map header. */
-function costMeter(ctx: StepContext) {
-  let usd = 0;
-  const rec: StepContext = {
-    ...ctx,
-    recordLlmCall(r) {
-      usd += r.costUsd ?? 0;
-      return ctx.recordLlmCall(r);
-    },
-    recordApiCall: (r) => ctx.recordApiCall(r),
-  };
-  return { rec, total: () => Math.round(usd * 10000) / 10000 };
-}
-
 export async function labelPlan(
   llm: JsonModel,
   plan: MapPlan,
   opts: { model: string; batchSize: number; concurrency: number },
   ctx: StepContext,
+  pages: PageRef[] = [],
 ): Promise<Map<string, NodeLabel>> {
   const labels = new Map<string, NodeLabel>();
+  // Where the business is: its location pages, by name. A place that isn't here isn't served.
+  const locations = pages
+    .filter((p) => p.kind === "location")
+    .map((p) => pageTitle(p, plan.context.site.name))
+    .filter(Boolean);
   const work: {
     entity: string;
     batch: NodeDraft[];
@@ -183,7 +145,7 @@ export async function labelPlan(
       {
         model: opts.model,
         template: MAP_TEMPLATE,
-        messages: buildLabelMessages(plan.context, w.entity, w.batch, w.hubs, w.byId),
+        messages: buildLabelMessages(plan.context, w.entity, w.batch, w.hubs, w.byId, locations),
         params: { temperature: 0, seed },
       },
       LabelAnswer,
@@ -196,6 +158,8 @@ export async function labelPlan(
       if (r.attribute?.trim()) label.attribute = r.attribute.trim();
       if (r.macroContext?.trim()) label.macroContext = r.macroContext.trim();
       if (r.why?.trim()) label.why = r.why.trim();
+      if (r.name?.trim()) label.name = r.name.trim();
+      if (r.drop) label.drop = r.drop as FitReason;
       if (!n.isRoot && !n.parentId && !n.hub) {
         const pick = r.parent?.trim() ?? "";
         const hub = /^h\d+$/.test(pick) ? w.hubs[Number(pick.slice(1))] : undefined;
@@ -234,69 +198,4 @@ export async function labelPlan(
   if (defaultedHubs)
     ctx.log.warn("no hub after a retry; page stays under the root", { defaultedHubs });
   return labels;
-}
-
-export function mapStep(llm: JsonModel) {
-  return defineStep({
-    name: "map",
-    version: MAP_STEP_VERSION,
-    input: MapInput,
-    output: SiteMaps,
-    async run(input, ctx) {
-      const plan = planMaps({
-        context: input.context,
-        clusters: input.clusters,
-        queries: input.queries,
-      });
-      ctx.log.info("map plan", {
-        entities: plan.entities.map((e) => ({
-          entity: e.entity,
-          pages: e.nodes.length,
-          topLevel: e.nodes.filter((n) => !n.isRoot && !n.parentId).length,
-        })),
-      });
-      const meter = costMeter(ctx);
-      // Existing pages first: the site's own sections become hubs the labels can build on.
-      const linked = await linkPages(
-        llm,
-        plan,
-        input.pages,
-        { model: input.model, concurrency: input.concurrency },
-        meter.rec,
-      );
-      // The model's read of untyped pages (WordPress custom types arrive as "other").
-      const pages = input.pages.map((p) => {
-        const kind = linked.kinds.get(p.url);
-        return kind ? { ...p, kind } : p;
-      });
-      const siteHubs = anchorSiteHubs(plan, pages, linked.links);
-      ctx.log.info("site hubs", {
-        hubs: [...siteHubs].map(([entity, ids]) => ({ entity, count: ids.length })),
-      });
-      const labels = await labelPlan(
-        llm,
-        plan,
-        { model: input.model, batchSize: input.batchSize, concurrency: input.concurrency },
-        meter.rec,
-      );
-      const groups = await groupPages(
-        llm,
-        plan,
-        labels,
-        { model: input.model, concurrency: input.concurrency },
-        meter.rec,
-      );
-      return finishMaps({
-        plan,
-        labels,
-        groups,
-        pages,
-        pageLinks: linked.links,
-        pageAlso: linked.also,
-        runId: ctx.runId,
-        createdAt: new Date().toISOString(),
-        costUsd: meter.total(),
-      });
-    },
-  });
 }
