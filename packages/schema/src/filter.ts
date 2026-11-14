@@ -28,6 +28,8 @@ export const FilteredQuery = Query.extend({
   label: RelevanceLabel.optional(),
   /** Short English reason from the model, for review. */
   why: z.string().optional(),
+  /** Canonical English topic name from the model: aliases of one thing share it. */
+  topic: z.string().optional(),
 });
 export type FilteredQuery = z.infer<typeof FilteredQuery>;
 

@@ -26,7 +26,7 @@ const tierRank = (l: string) => (l === "core" ? 0 : l === "outer" ? 1 : 2);
 export function summarizeClusters(d: ClusterSet): string[] {
   const s = d.stats;
   const lines = [
-    `queries     ${s.queries} kept, ${s.clustered} clustered, ${d.unclustered.length} without a SERP`,
+    `queries     ${s.queries} kept, ${s.clustered} clustered, ${d.unclustered.length - s.leftOut} without a SERP, ${s.leftOut} left out (bridges with no host)`,
     `clusters    ${s.clusters}: ${s.pages} pages, ${s.sections} sections, ${s.micro} micro`,
     `review      ${s.outliers} flagged, ${s.ambiguousMembers} ambiguous, ${s.borderlineMembers} borderline (exactly ${d.minSharedUrls} shared)`,
     `singletons  ${s.singletons} of ${s.clusters} clusters have one query (${s.merged} merged as variants or same intent)`,

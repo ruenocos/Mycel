@@ -78,7 +78,7 @@ describe("clusterQueries", () => {
       [
         q("grote kamerplant kopen", { volume: 900, label: "core", relevance: 1 }),
         q("grote kamerplanten", { volume: 400, label: "core", relevance: 1 }),
-        q("kamerplant xl", { volume: 90 }),
+        q("kamerplant xl", { volume: 90, label: "core" }),
         q("monstera verzorgen", { volume: 300 }),
       ],
       [
@@ -220,6 +220,62 @@ describe("relevance tiers and merges", () => {
     expect(bridge).toMatchObject({ label: "bridge", qdp: "section" });
     expect(bridge?.qdpWhy).toContain('Bridge topic on "kamerplant kopen"');
     expect(bridge?.qdpWhy).toContain("15000 searches a month");
+  });
+
+  it("merges aliases that the filter gave the same topic, if they share a result", () => {
+    const t = (text: string, topic: string, volume: number) => ({ ...q(text, { volume }), topic });
+    const r = run(
+      [
+        t("navision", "Microsoft Dynamics NAV", 1300),
+        t("microsoft nav", "Microsoft Dynamics NAV", 1300),
+        t("nav kassa", "Microsoft Dynamics NAV", 50),
+      ],
+      [
+        serp("navision", ["1", "2", "3", "4", "5", "6"]),
+        serp("microsoft nav", ["1", "7", "8", "9", "10", "11"]),
+        serp("nav kassa", ["30", "31", "32", "33", "34", "35"]),
+      ],
+    );
+    const nav = r.clusters.find((c) => c.hub === "microsoft nav");
+    expect(nav?.members.map((m) => m.query)).toEqual(["microsoft nav", "navision"]);
+    expect(nav?.members[1]?.joined).toContain("same topic");
+    expect(r.clusters.find((c) => c.hub === "nav kassa")).toBeDefined(); // no shared result
+  });
+
+  it("keeps chain merges inside one tier", () => {
+    const r = run(
+      [
+        q("a", { volume: 900, label: "core", relevance: 1 }),
+        q("b", { volume: 400, label: "core", relevance: 1 }),
+        q("c", { volume: 90, label: "outer" }),
+      ],
+      [
+        serp("a", ["1", "2", "3", "4", "5", "6"]),
+        serp("b", ["1", "2", "3", "7", "8", "9"]),
+        serp("c", ["1", "7", "8", "9", "10", "11"]),
+      ],
+    );
+    expect(r.clusters.find((c) => c.hub === "c")).toBeDefined();
+  });
+
+  it("leaves a bridge out of the map when no page shares a result with it", () => {
+    const r = run(
+      [
+        q("kamerplant kopen", { volume: 500, label: "core", relevance: 1 }),
+        q("planten kopen", { volume: 9000, label: "bridge", relevance: 0.25 }),
+      ],
+      [
+        serp("kamerplant kopen", ["1", "2", "3", "4", "5", "6"]),
+        serp("planten kopen", ["20", "21", "22", "23", "24", "25"]),
+      ],
+    );
+    expect(r.clusters.map((c) => c.mainQuery)).toEqual(["kamerplant kopen"]);
+    expect(r.leftOut).toEqual([
+      {
+        query: "planten kopen",
+        reason: "bridge topic with no page that shares a result with it (9000 searches a month)",
+      },
+    ]);
   });
 
   it("stems Dutch variants but leaves other words alone", () => {

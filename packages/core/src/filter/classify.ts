@@ -19,13 +19,14 @@ import { mergeDuplicates, ruleFor, scoreQueries } from "./rules.ts";
  * software, not Erp the village); it never adds queries or numbers.
  */
 
-export const FILTER_TEMPLATE = { id: "filter-classify", version: "2" } as const;
+export const FILTER_TEMPLATE = { id: "filter-classify", version: "3" } as const;
 
 /**
  * Step logic version (rules + prompt); bump when either changes.
  * 2: no drop on detected language. 3: four relevance tiers (core, outer, bridge, off).
+ * 5: a canonical topic name per query; bare category words are bridge. (4 is PR #40's brand rule.)
  */
-export const FILTER_STEP_VERSION = "3";
+export const FILTER_STEP_VERSION = "5";
 
 export const ClassifyAnswer = z.object({
   results: z.array(
@@ -35,6 +36,8 @@ export const ClassifyAnswer = z.object({
       /** Exact central entity name, or empty when off. */
       entity: z.string().optional(),
       why: z.string().max(200).optional(),
+      /** Canonical English name of what the query is about, the same for every alias. */
+      topic: z.string().max(80).optional(),
     }),
   ),
 });
@@ -52,14 +55,15 @@ export function buildClassifyMessages(ctx: ClientContext, batch: string[]) {
     "Label each query by how close it is to the central entity and the source context:",
     '- "core": about what the business sells or does (the central entity or one of its main attributes), or a direct buying or comparison question about it.',
     '- "outer": a smaller attribute, feature, problem, cost, how-to or term of the central entity that a future customer searches. It supports the core but is not a direct sale.',
-    '- "bridge": a broader category the entity belongs to, a neighbouring product or subject, or a general concept, where the query names neither the central entity nor one of its attributes. Worth a mention on a page, not a page of its own.',
+    '- "bridge": a broader category the entity belongs to, a neighbouring product or subject, or a general concept, where the query names neither the central entity nor one of its attributes. The bare word for the wider category on its own is bridge too. Worth a mention on a page, not a page of its own.',
     '- "off": a different meaning of the words, a different subject, jobs, education or courses, a different location, or a navigational search for an unrelated company.',
-    'Example for a business selling electric bikes: "electric bike kopen" is core, "electric bike accu bereik" is outer, "fiets" or "e-scooter" is bridge, "fietsenmaker vacature" is off.',
+    'Example for a business selling electric bikes: "electric bike kopen" is core, "electric bike accu bereik" is outer, "fiets", "fietsen" or "e-scooter" is bridge, "fietsenmaker vacature" is off.',
+    'Also give each query a "topic": what it is about, in English, 1 to 5 words. Use one canonical name for the same thing every time: every name, abbreviation or old name of one product or concept gets its official name. Put the attribute asked about after the name ("Electric bike battery range"). A query that only names the thing gets just the name.',
     `A query in another language than ${lang} is off, unless it is a term people in this market search in that form.`,
     "Use the profile's meaning of each central entity. A query that uses the same word in another sense is off. Things listed under notThis are off.",
     "Competitor names are fine when the query compares or chooses between options; a plain search for a competitor's own site or login is off.",
     local,
-    'Answer with JSON: {"results":[{"i":0,"label":"core|outer|bridge|off","entity":"<exact central entity name, empty when off>","why":"<a few English words>"}]}. Answer every number exactly once.',
+    'Answer with JSON: {"results":[{"i":0,"label":"core|outer|bridge|off","entity":"<exact central entity name, empty when off>","why":"<a few English words>","topic":"<canonical English topic>"}]}. Answer every number exactly once.',
   ]
     .filter(Boolean)
     .join("\n");
@@ -97,7 +101,7 @@ export const FilterInput = z.object({
 });
 export type FilterInput = z.input<typeof FilterInput>;
 
-type Label = { label: RelevanceLabel; entity?: string; why?: string };
+type Label = { label: RelevanceLabel; entity?: string; why?: string; topic?: string };
 
 export function filterStep(llm: JsonModel) {
   return defineStep({
@@ -149,6 +153,7 @@ export function filterStep(llm: JsonModel) {
             label: r.label,
             ...(r.entity && entities.has(r.entity) ? { entity: r.entity } : {}),
             ...(r.why ? { why: r.why } : {}),
+            ...(r.topic?.trim() ? { topic: r.topic.trim() } : {}),
           });
         }
       };
@@ -182,6 +187,7 @@ export function filterStep(llm: JsonModel) {
         const l = labels.get(q) as Label;
         q.label = l.label;
         if (l.why) q.why = l.why;
+        if (l.topic) q.topic = l.topic;
         if (l.label === "off") {
           drop(q, "off", `off topic${l.why ? `: ${l.why}` : ""}`);
         } else {
