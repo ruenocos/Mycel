@@ -24,11 +24,15 @@ import {
  * step: data builds the tree, the model names each page and places pages whose words don't nest.
  */
 
-/** The fake model labels every page and leaves top-level pages under the root. */
+/** The fake model labels every page, keeps its likely existing pages and leaves hubs at the root. */
 function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   const fake = new FakeProvider([], (req) => {
     const user = req.messages.find((m) => m.role === "user")?.content ?? "";
-    const pages = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as { i: number; page: string }[];
+    const pages = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
+      i: number;
+      page: string;
+      likely?: string[];
+    }[];
     return JSON.stringify({
       results: pages.map((p) => ({
         i: p.i,
@@ -36,6 +40,7 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
         macroContext: p.page,
         why: `fake label for ${p.page}`,
         parent: "root",
+        pages: p.likely ?? [],
       })),
     });
   });

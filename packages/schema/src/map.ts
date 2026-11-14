@@ -19,8 +19,11 @@ export const PageIntent = z.object({
   main: z.enum(["informational", "commercial", "transactional", "navigational", "local"]),
   /** A second intent is nearly as strong: often worth two pages (a cost guide and a service page). */
   mixed: z.boolean(),
-  /** What decided it: query data and SERP features, or only the tier when there was no data. */
-  source: z.enum(["data", "tier"]),
+  /**
+   * What decided it: query data and SERP features; a core page naming one of the client's
+   * offerings (a service page); or only the tier when there was no data.
+   */
+  source: z.enum(["data", "offering", "tier"]),
 });
 export type PageIntent = z.infer<typeof PageIntent>;
 

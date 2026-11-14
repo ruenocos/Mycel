@@ -12,6 +12,7 @@ import type {
   TopicalMap,
 } from "@mycel/schema";
 import { termSimilarity, termWeights, variantKey } from "../cluster/cluster.ts";
+import { brandTokens, isBrandQuery } from "../research/seeds.ts";
 
 /**
  * Koray steps 11-14 and 20 (issue #19), the deterministic half: page clusters become map nodes
@@ -21,10 +22,15 @@ import { termSimilarity, termWeights, variantKey } from "../cluster/cluster.ts";
  * - Hierarchy: a page whose words contain another page's words sits under it ("plat dak
  *   vervangen" under "dak vervangen"). Pages with no such parent get one from the model, chosen
  *   among the top-level pages, or stay under the root.
- * - Intent per page: query intents weighted by volume, plus what the results page shows.
+ * - Intent per page: query intents weighted by volume, plus what the results page shows. A
+ *   navigational label only stands when a query names a brand; a core page that names one of
+ *   the client's offerings is a service page, not an article.
+ * - Brand searches ("de saak") are the homepage: they fold into the root.
  * - Priority 1-5: tier x intent x demand, banded by rank.
  * - Quality nodes (step 13): the strongest core pages, linked from the homepage.
- * - Existing pages: matched to nodes on their title, H1 and URL words; two on one node = conflict.
+ * - Existing pages: the model links them to nodes (it reads meaning: "XL planten" are big
+ *   plants), from candidates scored on weighted title, H1 and URL words; without the model the
+ *   word score decides. Two existing pages on one node = cannibalisation conflict.
  * - Link plan (step 20): up to the core, hub to pages, siblings, 3 side bridges between hubs.
  */
 
@@ -55,6 +61,8 @@ export interface NodeLabel {
   why?: string;
   /** Model's hub choice for a top-level page: a node id, or "root". */
   parent?: string;
+  /** Existing page URLs the model linked to this node. Undefined: the model wasn't asked. */
+  pages?: string[];
 }
 
 /** What page linking needs from an existing page; research.json keeps exactly these fields. */
@@ -105,18 +113,38 @@ const FEATURE_INTENT: Record<string, Intent> = {
   video: "informational",
 };
 
-/** Intent of a page: member intents weighted by volume, results-page features, then the tier. */
+export interface IntentHints {
+  /** A query names the client's or a competitor's brand: navigational can stand. */
+  brand?: boolean;
+  /** The page names one of the client's offerings (core pages only): a service page. */
+  offering?: boolean;
+  /** The market is one city: searches for a place are local, not navigational. */
+  local?: boolean;
+}
+
+/**
+ * Intent of a page: member intents weighted by volume, results-page features, then the tier.
+ * Data providers call product and place searches navigational ("business central partner",
+ * "fysiotherapeut utrecht"); without a brand in the query that becomes local in a city market
+ * and is dropped elsewhere.
+ */
 export function pageIntent(
   members: { intent?: string | undefined; volume: number }[],
   features: string[],
   tier: "core" | "outer",
+  hints: IntentHints = {},
 ): PageIntent {
   const score = new Map<Intent, number>();
   let total = 0;
   for (const m of members) {
     if (!m.intent || !INTENTS.includes(m.intent as Intent)) continue;
+    let intent = m.intent as Intent;
+    if (intent === "navigational" && !hints.brand) {
+      if (!hints.local) continue;
+      intent = "local";
+    }
     const w = Math.max(1, m.volume);
-    score.set(m.intent as Intent, (score.get(m.intent as Intent) ?? 0) + w);
+    score.set(intent, (score.get(intent) ?? 0) + w);
     total += w;
   }
   const featureWeight = Math.max(1, total) * 0.3;
@@ -126,8 +154,13 @@ export function pageIntent(
   }
   const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]);
   const [first, second] = ranked;
+  const service: Intent = hints.local ? "local" : "commercial";
+  if (hints.offering && (!first || first[0] === "informational")) {
+    // People read about the service before they book it: the page sells, and answers too.
+    return { main: service, mixed: !!first, source: "offering" };
+  }
   if (!first) {
-    return { main: tier === "core" ? "commercial" : "informational", mixed: false, source: "tier" };
+    return { main: tier === "core" ? service : "informational", mixed: false, source: "tier" };
   }
   return { main: first[0], mixed: !!second && second[1] >= first[1] * 0.6, source: "data" };
 }
@@ -153,6 +186,20 @@ export function planMaps(input: {
   const entityNames = context.centralEntities.map((e) => e.name);
   const entityOf = (c: ClusterDetail) =>
     c.entity && entityNames.includes(c.entity) ? c.entity : (entityNames[0] as string);
+  const isOwnBrand = ownBrand(context);
+  const anyBrands = [
+    ...brandTokens(context),
+    ...context.competitors.flatMap((c) => {
+      try {
+        const url = /^https?:\/\//.test(c) ? c : `https://${c}`;
+        return brandTokens({ site: { url, name: new URL(url).hostname } });
+      } catch {
+        // A competitor written as a name, not a domain: its words are the brand.
+        return [c];
+      }
+    }),
+  ];
+  const offerings = context.offerings.map((o) => tokens(o, language)).filter((t) => t.size > 0);
 
   const sectionsOf = new Map<string, MapSection[]>();
   for (const c of clusters.clusters) {
@@ -182,6 +229,17 @@ export function planMaps(input: {
       const priced = members.filter((m) => m.cpc !== undefined && m.volume > 0);
       const pricedVolume = priced.reduce((s, m) => s + m.volume, 0);
       const section = c.label === "core" ? "core" : "outer";
+      const texts = [c.mainQuery, ...c.members.map((m) => m.query)];
+      const hints: IntentHints = {
+        brand: texts.some((t) => isOwnBrand(t) || isBrandQuery(t, anyBrands)),
+        offering:
+          section === "core" &&
+          texts.some((t) => {
+            const mine = tokens(t, language);
+            return offerings.some((o) => [...o].every((x) => mine.has(x)));
+          }),
+        local: !!context.market.city,
+      };
       return {
         id: `n-${c.id}`,
         entity,
@@ -201,7 +259,7 @@ export function planMaps(input: {
                 ) / 100,
             }
           : {}),
-        intent: pageIntent(members, c.serpFeatures, section),
+        intent: pageIntent(members, c.serpFeatures, section, hints),
         aiOverview: c.aiOverview,
         qdpWhy: c.qdpWhy,
       };
@@ -239,6 +297,16 @@ export function planMaps(input: {
       nodes.unshift(root);
     }
 
+    // Brand searches are the homepage: their queries and demand go to the root.
+    for (const n of [...nodes]) {
+      if (n === root || !isOwnBrand(n.mainQuery)) continue;
+      root.queries.push(n.mainQuery, ...n.queries.filter((q) => q !== n.mainQuery));
+      root.sections.push(...n.sections);
+      root.volume += n.volume;
+      root.gscImpressions += n.gscImpressions;
+      nodes.splice(nodes.indexOf(n), 1);
+    }
+
     // Word rule: the most specific page whose words are all in this page's words is its parent.
     // A core page never sits under an outer page.
     const tok = new Map(nodes.map((n) => [n.id, tokens(n.mainQuery, language)]));
@@ -271,60 +339,136 @@ export function hubChoices(plan: MapPlan, entity: string) {
   return { pages: top, hubs: top };
 }
 
-/** Matches existing pages to nodes on the words of their title, H1 and URL. */
+/**
+ * True for a search that is just the client's own name: "desaak", "de saak", or "saak" for De
+ * Saak (the name without its small words).
+ */
+export function ownBrand(ctx: Pick<ClientContext, "site" | "market">) {
+  const brands = brandTokens(ctx);
+  const nameKey = variantKey(ctx.site.name, ctx.market.language);
+  return (q: string) => {
+    const key = variantKey(q, ctx.market.language);
+    return (
+      (!!nameKey && key === nameKey) || (isBrandQuery(q, brands) && key.split(" ").length <= 2)
+    );
+  };
+}
+
+export interface PageScore {
+  /** Weighted share of the query's words found on the page (title, H1, URL). */
+  score: number;
+  /** Weighted share of the page's H1 words that the query covers: the page's own topic. */
+  h1: number;
+}
+
+const SKIP_KINDS = new Set<SitePage["kind"]>(["home", "about", "contact"]);
+const isHome = (p: PageRef) => p.kind === "home" || p.url === "/";
+
+/**
+ * Scores every existing page against every node. Words are weighted by rarity across the map's
+ * queries, so "dakdekker" in "Dakdekker Schiedam" doesn't make the Schiedam page the dakdekker
+ * page. The site's own name is taken out first: it sits in every title.
+ */
+export function scorePages(
+  nodes: NodeDraft[],
+  pages: PageRef[],
+  ctx: Pick<ClientContext, "site" | "market">,
+): Map<string, Map<string, PageScore>> {
+  const language = ctx.market.language;
+  const brands = new Set(brandTokens(ctx));
+  const nameRe = new RegExp(ctx.site.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const clean = (text: string) => {
+    const t = tokens(text.replace(nameRe, " "), language);
+    for (const b of brands) t.delete(b);
+    return t;
+  };
+  const queryTokens = new Map(
+    nodes.map((n) => [n.id, [n.mainQuery, ...n.queries].map((q) => tokens(q, language))]),
+  );
+  const df = new Map<string, number>();
+  let docs = 0;
+  for (const list of queryTokens.values()) {
+    for (const t of list) {
+      docs++;
+      for (const x of t) df.set(x, (df.get(x) ?? 0) + 1);
+    }
+  }
+  const w = (x: string) => Math.log((docs + 1) / ((df.get(x) ?? 0) + 1)) + 0.1;
+  const sum = (xs: Iterable<string>) => {
+    let total = 0;
+    for (const x of xs) total += w(x);
+    return total;
+  };
+  const out = new Map<string, Map<string, PageScore>>();
+  for (const page of pages) {
+    if (isHome(page) || SKIP_KINDS.has(page.kind)) continue;
+    const words = clean(`${page.title} ${page.h1} ${page.url.replace(/[/-]/g, " ")}`);
+    const h1 = clean(page.h1);
+    const h1Weight = sum(h1);
+    const perNode = new Map<string, PageScore>();
+    for (const n of nodes) {
+      let best: PageScore = { score: 0, h1: 0 };
+      for (const t of queryTokens.get(n.id) ?? []) {
+        if (t.size === 0) continue;
+        const score = sum([...t].filter((x) => words.has(x))) / sum(t);
+        const h1Cover = h1Weight ? sum([...h1].filter((x) => t.has(x))) / h1Weight : 0;
+        if (score > best.score || (score === best.score && h1Cover > best.h1)) {
+          best = { score, h1: h1Cover };
+        }
+      }
+      if (best.score > 0) perNode.set(n.id, best);
+    }
+    out.set(page.url, perNode);
+  }
+  return out;
+}
+
+/** A page is a match for a node when it covers the query and the query covers its H1. */
+export const isWordMatch = (s: PageScore | undefined) => !!s && s.score >= 2 / 3 && s.h1 >= 0.5;
+
+/** Word-only page linking, when no model labels are given: each page to its best node. */
 export function matchPages(
   nodes: NodeDraft[],
   pages: PageRef[],
-  language: string,
-): Map<string, { url: string; score: number; kind: SitePage["kind"] }[]> {
-  const found = new Map<string, { url: string; score: number; kind: SitePage["kind"] }[]>();
-  const add = (id: string, m: { url: string; score: number; kind: SitePage["kind"] }) => {
-    const list = found.get(id) ?? [];
-    list.push(m);
-    found.set(id, list);
-  };
+  ctx: Pick<ClientContext, "site" | "market">,
+  scores = scorePages(nodes, pages, ctx),
+): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  const add = (id: string, url: string) => found.set(id, [...(found.get(id) ?? []), url]);
   const root = nodes.find((n) => n.isRoot);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   for (const page of pages) {
-    if (page.kind === "home" || page.url === "/") {
-      if (root) add(root.id, { url: page.url, score: 1, kind: page.kind });
+    if (isHome(page)) {
+      if (root) add(root.id, page.url);
       continue;
     }
-    if (page.kind === "about" || page.kind === "contact") continue;
-    const words = tokens(`${page.title} ${page.h1} ${page.url.replace(/[/-]/g, " ")}`, language);
-    const h1 = tokens(page.h1, language);
-    let best: { node: NodeDraft; score: number; h1: number; size: number } | undefined;
-    for (const n of nodes) {
-      for (const q of [n.mainQuery, ...n.queries]) {
-        const t = tokens(q, language);
-        if (t.size === 0) continue;
-        let hit = 0;
-        let inH1 = 0;
-        for (const x of t) {
-          if (words.has(x)) hit++;
-          if (h1.has(x)) inH1++;
-        }
-        const score = hit / t.size;
-        // Prefer full cover, then what the H1 says (the page's own topic), then the more specific
-        // query, then the bigger page.
-        const tie = (a: number, b: number) => (a === b ? 0 : a > b ? 1 : -1);
-        const order = best
-          ? tie(score, best.score) ||
-            tie(inH1, best.h1) ||
-            tie(t.size, best.size) ||
-            tie(n.volume, best.node.volume)
-          : 1;
-        if (order > 0) best = { node: n, score, h1: inH1, size: t.size };
-      }
+    let best: { id: string; s: PageScore } | undefined;
+    for (const [id, s] of scores.get(page.url) ?? []) {
+      if (!isWordMatch(s)) continue;
+      const better =
+        !best ||
+        s.score + s.h1 > best.s.score + best.s.h1 ||
+        (s.score + s.h1 === best.s.score + best.s.h1 &&
+          (byId.get(id)?.volume ?? 0) > (byId.get(best.id)?.volume ?? 0));
+      if (better) best = { id, s };
     }
-    if (best && best.score >= 2 / 3 && (best.size >= 2 || best.score === 1)) {
-      add(best.node.id, {
-        url: page.url,
-        score: Math.round(best.score * 100) / 100,
-        kind: page.kind,
-      });
-    }
+    if (best) add(best.id, page.url);
   }
   return found;
+}
+
+/** Candidate pages for one node, for the model to confirm: the best word scores first. */
+export function pageCandidates(
+  scores: Map<string, Map<string, PageScore>>,
+  nodeId: string,
+  max = 3,
+): string[] {
+  return [...scores.entries()]
+    .map(([url, per]) => ({ url, s: per.get(nodeId) }))
+    .filter((x): x is { url: string; s: PageScore } => !!x.s && x.s.score >= 0.5 && x.s.h1 > 0)
+    .sort((a, b) => b.s.score + b.s.h1 - (a.s.score + a.s.h1))
+    .slice(0, max)
+    .map((x) => x.url);
 }
 
 const CONTENT_KINDS = new Set(["blog", "guide"]);
@@ -340,7 +484,6 @@ export function finishMaps(input: {
 }): SiteMaps {
   const { plan, labels } = input;
   const ctx = plan.context;
-  const language = ctx.market.language;
   const maps: TopicalMap[] = [];
   for (const { entity, nodes } of plan.entities) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -395,8 +538,42 @@ export function finishMaps(input: {
     const qualityCount = Math.max(3, Math.min(12, Math.ceil(coreRanked.length * 0.1)));
     const quality = new Set([root.id, ...coreRanked.slice(0, qualityCount).map((n) => n.id)]);
 
-    // Existing pages.
-    const matched = input.pages ? matchPages(nodes, input.pages, language) : new Map();
+    // Existing pages: the model's links when it gave them, else the word score. One page sits
+    // on one node: claimed twice, it goes to the node it matches best (then the bigger one).
+    const pageList = input.pages ?? [];
+    const kindOf = new Map(pageList.map((p) => [p.url, p.kind]));
+    const scores = scorePages(nodes, pageList, ctx);
+    const scoreOf = (url: string, id: string) => scores.get(url)?.get(id) ?? { score: 0, h1: 0 };
+    let linked: Map<string, string[]>;
+    if (nodes.some((n) => labels.get(n.id)?.pages !== undefined)) {
+      const claims = new Map<string, NodeDraft[]>();
+      for (const n of nodes) {
+        if (n.isRoot) continue;
+        for (const url of labels.get(n.id)?.pages ?? []) {
+          const kind = kindOf.get(url);
+          if (!kind || SKIP_KINDS.has(kind) || url === "/") continue;
+          claims.set(url, [...(claims.get(url) ?? []), n]);
+        }
+      }
+      linked = new Map();
+      const home = pageList.find(isHome);
+      if (home) linked.set(root.id, [home.url]);
+      for (const [url, by] of claims) {
+        const rank = (n: NodeDraft) => {
+          const s = scoreOf(url, n.id);
+          return s.score + s.h1;
+        };
+        const best = by.sort((a, b) => rank(b) - rank(a) || b.volume - a.volume)[0] as NodeDraft;
+        linked.set(best.id, [...(linked.get(best.id) ?? []), url]);
+      }
+    } else {
+      linked = matchPages(nodes, pageList, ctx, scores);
+    }
+    const pagesOf = (n: NodeDraft) =>
+      (linked.get(n.id) ?? [])
+        .map((url) => ({ url, kind: kindOf.get(url) ?? "other", ...scoreOf(url, n.id) }))
+        .map((x) => (x.url === "/" || x.kind === "home" ? { ...x, score: 1, h1: 1 } : x))
+        .sort((a, b) => b.score + b.h1 - (a.score + a.h1));
 
     // Proposed URLs: core flat, outer under its hub (Koray step 16); an existing URL is kept.
     const used = new Set<string>();
@@ -412,9 +589,7 @@ export function finishMaps(input: {
       return p && !p.isRoot ? slugify(p.mainQuery) : "";
     };
     for (const n of [root, ...ranked]) {
-      const existing = (matched.get(n.id) ?? []).sort(
-        (a: { score: number }, b: { score: number }) => b.score - a.score,
-      )[0];
+      const existing = pagesOf(n)[0];
       let url: string;
       if (existing) url = existing.url;
       else if (n.isRoot) url = "/";
@@ -476,11 +651,9 @@ export function finishMaps(input: {
 
     const mapNodes: MapNode[] = [root, ...ranked].map((n) => {
       const label = labels.get(n.id) ?? {};
-      const pagesHere = (matched.get(n.id) ?? []).sort(
-        (a: { score: number }, b: { score: number }) => b.score - a.score,
-      ) as { url: string; score: number; kind: SitePage["kind"] }[];
+      const pagesHere = pagesOf(n);
       const top = pagesHere[0];
-      const conflictUrls = pagesHere.filter((p) => p.score >= 2 / 3).map((p) => p.url);
+      const conflictUrls = pagesHere.map((p) => p.url);
       const conflict =
         !n.isRoot && conflictUrls.length >= 2
           ? {
@@ -509,7 +682,7 @@ export function finishMaps(input: {
         sections: n.sections,
         intent: n.intent,
         proposedUrl: urlOf.get(n.id) as string,
-        existingPage: top ? { url: top.url, matchScore: top.score } : null,
+        existingPage: top ? { url: top.url, matchScore: Math.round(top.score * 100) / 100 } : null,
         ...(conflict ? { conflict } : {}),
         demand: {
           volume: n.volume,
@@ -520,7 +693,7 @@ export function finishMaps(input: {
         flags: { quality: quality.has(n.id), trending: false },
         linksOut: linksOf(n),
         aiOverview: n.aiOverview,
-        status: top ? (top.score >= 1 ? "exists_covered" : "exists_weak") : "idea",
+        status: top ? (isWordMatch(top) ? "exists_covered" : "exists_weak") : "idea",
         why: (label.why?.trim().length ?? 0) >= 10 ? (label.why as string).trim() : n.qdpWhy,
       };
     });

@@ -15,7 +15,15 @@ import { describe, expect, it } from "vitest";
 import type { JsonModel } from "../context/llm.ts";
 import { RunStore } from "../log/run-store.ts";
 import { runStep } from "../step.ts";
-import { finishMaps, type NodeLabel, pageIntent, planMaps, slugify } from "./build.ts";
+import {
+  finishMaps,
+  matchPages,
+  type NodeLabel,
+  ownBrand,
+  pageIntent,
+  planMaps,
+  slugify,
+} from "./build.ts";
 import { checkGate } from "./gate.ts";
 import { type LabelAnswer, mapStep } from "./label.ts";
 
@@ -115,40 +123,53 @@ const queries: FilteredQuery[] = [
   fq("gele bladeren kamerplant", "informational"),
 ];
 
-/** A stub model: labels every page and picks hubs from a fixed list by page name. */
-function stub(hubs: Record<string, string> = {}): JsonModel & { calls: number } {
+/**
+ * A stub model: labels every page, picks hubs from a fixed list by page name, and links the
+ * "likely" existing pages (plus extra ones by URL) the way a model that reads meaning would.
+ */
+function stub(
+  hubs: Record<string, string> = {},
+  links: Record<string, string[]> = {},
+): JsonModel & { calls: number; prompts: string[] } {
   const model = {
     calls: 0,
+    prompts: [] as string[],
     async generateJson(
       req: { messages: { content: string }[] },
       schema: { parse: (v: unknown) => unknown },
     ) {
       model.calls++;
       const user = req.messages[1]?.content ?? "";
-      const hubList = JSON.parse(user.split("\nHubs:\n")[1]?.split("\n\nPages:\n")[0] ?? "[]") as {
-        id: string;
-        page: string;
-      }[];
+      model.prompts.push(user);
+      const section = (name: string) => user.split(`\n${name}:\n`)[1]?.split("\n\n")[0] ?? "";
+      const hubList = JSON.parse(section("Hubs") || "[]") as { id: string; page: string }[];
+      const existing = section("Existing pages")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { id: string; url: string });
       const list = JSON.parse(user.split("\nPages:\n")[1] ?? "[]") as {
         i: number;
         page: string;
         topLevel?: boolean;
+        likely?: string[];
       }[];
       const results: LabelAnswer["results"] = list.map((p) => {
         const want = hubs[p.page];
         const hub = want === "root" ? "root" : hubList.find((h) => h.page === want)?.id;
+        const extra = (links[p.page] ?? []).map((u) => existing.find((e) => e.url === u)?.id ?? "");
         return {
           i: p.i,
           attribute: p.page,
           macroContext: `Over ${p.page}`,
           why: `Een eigen pagina voor ${p.page}.`,
           ...(p.topLevel && hub ? { parent: hub } : {}),
+          pages: [...(p.likely ?? []), ...extra],
         };
       });
       return schema.parse({ results });
     },
   };
-  return model as unknown as JsonModel & { calls: number };
+  return model as unknown as JsonModel & { calls: number; prompts: string[] };
 }
 
 const newRun = () =>
@@ -204,6 +225,21 @@ describe("pageIntent", () => {
     );
     expect(i.mixed).toBe(true);
   });
+  it("keeps navigational only for brand searches: local in a city market, else dropped", () => {
+    const nav = [{ intent: "navigational", volume: 100 }];
+    expect(pageIntent(nav, [], "core", { local: true }).main).toBe("local");
+    expect(pageIntent(nav, [], "core").source).toBe("tier");
+    expect(pageIntent(nav, [], "core", { brand: true }).main).toBe("navigational");
+  });
+  it("makes a core page that names an offering a service page", () => {
+    const info = [{ intent: "informational", volume: 900 }];
+    expect(pageIntent(info, [], "core", { offering: true })).toEqual({
+      main: "commercial",
+      mixed: true,
+      source: "offering",
+    });
+    expect(pageIntent(info, [], "core", { offering: true, local: true }).main).toBe("local");
+  });
   it("uses results-page features, then the tier", () => {
     expect(pageIntent([], ["shopping"], "outer").main).toBe("transactional");
     expect(pageIntent([], [], "core")).toEqual({
@@ -227,6 +263,23 @@ describe("planMaps", () => {
     expect(
       nodes.find((n) => n.mainQuery === "plantenpot kopen")?.sections.map((s) => s.mainQuery),
     ).toEqual(["plantenpot maat"]);
+  });
+
+  it("folds brand searches into the root", () => {
+    expect(
+      ownBrand({
+        site: { url: "https://www.desaak.com", name: "De Saak" },
+        market: context.market,
+      })("saak"),
+    ).toBe(true);
+    const set = ClusterSet.parse({
+      ...clusters,
+      clusters: [...clusters.clusters, cluster("brand", "core", [["plantpost", 700]])],
+    });
+    const nodes = planMaps({ context, clusters: set }).entities[0]?.nodes ?? [];
+    expect(nodes.some((n) => n.mainQuery === "plantpost")).toBe(false);
+    expect(nodes[0]?.queries).toContain("plantpost");
+    expect(nodes[0]?.volume).toBe(9700);
   });
 
   it("never puts a core page under an outer page", () => {
@@ -328,6 +381,35 @@ describe("mapStep", () => {
     await expect(
       runStep(newRun(), mapStep(lazy), { context, clusters, queries, pages, model: "fake" }),
     ).rejects.toThrow(/unlabeled after a retry/);
+  });
+});
+
+describe("matchPages", () => {
+  it("needs the query to cover the page's H1, so one shared word isn't a match", () => {
+    const nodes = planMaps({ context, clusters, queries }).entities[0]?.nodes ?? [];
+    const found = matchPages(
+      nodes,
+      [
+        { url: "/", kind: "home", title: "Plantpost", h1: "Kamerplanten" },
+        {
+          url: "/product/zamioculcas/",
+          kind: "product",
+          title: "Zamioculcas kopen | Plantpost",
+          h1: "Zamioculcas zamiifolia",
+        },
+        {
+          url: "/kamerplanten/grote-kamerplanten/",
+          kind: "category",
+          title: "Grote kamerplanten kopen | Plantpost",
+          h1: "Grote kamerplanten",
+        },
+      ],
+      context,
+    );
+    const all = [...found.values()].flat();
+    expect(all).not.toContain("/product/zamioculcas/");
+    expect(found.get("n-grote")).toEqual(["/kamerplanten/grote-kamerplanten/"]);
+    expect(found.get(nodes[0]?.id as string)).toEqual(["/"]);
   });
 });
 
