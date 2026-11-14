@@ -34,8 +34,9 @@ import { defineStep } from "../step.ts";
  * 2: relevance tiers (bridge never a page), variant and same-intent merges.
  * 3: same-topic merges (aliases), chain merges within one tier, a bridge needs a shared result
  * with its host page or it leaves the map.
+ * 4: same topic + same tier merges without a shared result; a bridge query never names a cluster.
  */
-export const CLUSTER_VERSION = "3";
+export const CLUSTER_VERSION = "4";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -278,13 +279,18 @@ export function clusterQueries(input: ClusterInput): {
     }
   }
   // Merge pass 1b: aliases. The filter model names each query's topic canonically ("Microsoft
-  // Dynamics NAV" for navision, microsoft nav, dynamics nav); same topic + a shared result = one.
+  // Dynamics NAV" for navision, microsoft nav, dynamics nav); same topic = one cluster.
   const byTopic = new Map<string, Draft>();
   const afterTopics: Draft[] = [];
   for (const d of afterVariants) {
     const topic = d.hub.topic ? canonical(d.hub.topic) : "";
     const first = topic ? byTopic.get(topic) : undefined;
-    if (first && intersect(d.hubKeys, first.hubKeys) >= 1) {
+    // Aliases of one thing often have unrelated SERPs, so the same tier is enough; across tiers
+    // a shared result is still needed.
+    if (
+      first &&
+      (tierOf(first.hub) === tierOf(d.hub) || intersect(d.hubKeys, first.hubKeys) >= 1)
+    ) {
       fold(first, d, `same topic as "${first.hub.text}" (${d.hub.topic})`);
     } else {
       if (topic && !first) byTopic.set(topic, d);
@@ -324,8 +330,10 @@ export function clusterQueries(input: ClusterInput): {
   const ids = new Set<string>();
   const clusters: (ClusterDetail & { _hubKeys: Set<string> })[] = kept.map((d) => {
     const qs = d.members.map((m) => m.q);
+    // The page is named after its biggest query, but never after a broader (bridge) one.
     const main = [...qs].sort(
       (a, b) =>
+        Number(tierOf(a) === "bridge") - Number(tierOf(b) === "bridge") ||
         (b.metrics.volume ?? -1) - (a.metrics.volume ?? -1) ||
         (b.metrics.gscImpressions ?? -1) - (a.metrics.gscImpressions ?? -1),
     )[0] as FilteredQuery;
