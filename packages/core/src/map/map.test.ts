@@ -17,9 +17,11 @@ import { RunStore } from "../log/run-store.ts";
 import { runStep } from "../step.ts";
 import {
   finishMaps,
+  isSectionPage,
   matchPages,
   type NodeLabel,
   ownBrand,
+  type PageRef,
   pageIntent,
   planMaps,
   slugify,
@@ -624,6 +626,35 @@ describe("finishMaps", () => {
     const n = maps.maps[0]?.nodes.find((x) => x.mainQuery === "kamerplant verpotten");
     expect(n?.why).toBe("Its own results page, so its own page.");
     expect(n?.rawNode).toEqual({ entity: "kamerplant", attribute: "kamerplant verpotten" });
+  });
+});
+
+describe("isSectionPage", () => {
+  it("knows section pages by kind, or by a folder of 3+ untyped pages without articles", () => {
+    const pg = (url: string, kind: PageRef["kind"]): PageRef => ({
+      url,
+      kind,
+      title: url,
+      h1: url,
+    });
+    const site = [
+      pg("/sectoren/bouw/", "other"),
+      pg("/sectoren/handel/", "other"),
+      pg("/sectoren/installatie/", "other"),
+      pg("/kennisbank/erp-kiezen/", "blog"),
+      pg("/kennisbank/dms/", "other"),
+      pg("/kennisbank/planning/", "other"),
+      pg("/kennisbank/btw/", "other"),
+      pg("/over-ons/", "other"),
+      pg("/diensten/", "service"),
+    ];
+    const yes = site.filter((p) => isSectionPage(p, site)).map((p) => p.url);
+    expect(yes).toEqual([
+      "/sectoren/bouw/",
+      "/sectoren/handel/",
+      "/sectoren/installatie/",
+      "/diensten/",
+    ]);
   });
 });
 

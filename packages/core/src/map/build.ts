@@ -364,9 +364,32 @@ export function hubChoices(plan: MapPlan, entity: string) {
 
 /** Page kinds that are a section of the site: what the business offers, sells or where. */
 const HUB_KINDS = new Set<SitePage["kind"]>(["service", "category", "location"]);
+/** Kinds that mark a folder as a format (articles, products), not a topic. */
+const FORMAT_KINDS = new Set<SitePage["kind"]>(["blog", "guide", "product"]);
+const folderOf = (url: string) => {
+  const parts = url.split("/").filter(Boolean);
+  return parts.length === 2 ? parts[0] : undefined;
+};
 
 /**
- * Grab the existing structure: a node that an existing service, category or location page serves
+ * A section page: a service, category or location page; or, when a reader can't tell kinds
+ * (WordPress custom post types come in as "other"), a page one level down in a folder of 3+
+ * such pages that holds no articles or products, like /sectoren/bouw/ or /diensten/advies/.
+ */
+export function isSectionPage(page: PageRef, all: PageRef[]): boolean {
+  if (HUB_KINDS.has(page.kind)) return true;
+  if (page.kind !== "other") return false;
+  const folder = folderOf(page.url);
+  if (!folder) return false;
+  const inFolder = all.filter((p) => p.url.split("/").filter(Boolean)[0] === folder);
+  return (
+    inFolder.filter((p) => folderOf(p.url) === folder && p.kind === "other").length >= 3 &&
+    !inFolder.some((p) => FORMAT_KINDS.has(p.kind))
+  );
+}
+
+/**
+ * Grab the existing structure: a node that an existing section page (isSectionPage) serves
  * becomes a site hub, locked under the root at that page's URL. A word-rule parent only stays
  * when it is a site hub too (category > subcategory). Pages the model didn't judge fall back to
  * the word score. Returns the hubs found per entity.
@@ -377,7 +400,7 @@ export function anchorSiteHubs(
   pageLinks?: Map<string, string | null>,
 ): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  const hubPages = pages.filter((p) => HUB_KINDS.has(p.kind) && !isHome(p));
+  const hubPages = pages.filter((p) => !isHome(p) && isSectionPage(p, pages));
   for (const { entity, nodes } of plan.entities) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const words = new Map<string, string>();
