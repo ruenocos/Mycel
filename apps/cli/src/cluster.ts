@@ -68,6 +68,13 @@ export interface ClusterResult {
 
 export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult> {
   const env = opts.env ?? process.env;
+  const budgetUsd = opts.budgetUsd ?? 3;
+  if (!Number.isFinite(budgetUsd) || budgetUsd <= 0) {
+    throw new Error(`--budget must be a positive number of dollars, got ${opts.budgetUsd}`);
+  }
+  if (opts.minShared !== undefined && !(Number.isInteger(opts.minShared) && opts.minShared > 0)) {
+    throw new Error(`--min-shared must be a positive whole number, got ${opts.minShared}`);
+  }
   const queries = FilteredQueries.parse(readJson(opts.queriesFile));
   const contextFile = opts.contextFile ?? join(dirname(opts.queriesFile), "context.json");
   const context = ClientContext.parse(readJson(contextFile));
@@ -76,7 +83,6 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
       `${contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
     );
   }
-  const budgetUsd = opts.budgetUsd ?? 3;
   const dfs =
     env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD
       ? new DataforseoClient({

@@ -91,4 +91,15 @@ describe("mycel cluster", () => {
       clusterRun({ runsDir: join(dir, "runs"), queriesFile: join(dir, "queries.json"), env: {} }),
     ).rejects.toThrow("isn't confirmed yet");
   });
+
+  it("rejects a budget that isn't a number, so the cap can't silently turn off", async () => {
+    await expect(
+      clusterRun({
+        runsDir: join(tmp(), "runs"),
+        queriesFile: join(fixture("plantpost"), "missing.json"),
+        budgetUsd: Number("abc"),
+        env: {},
+      }),
+    ).rejects.toThrow("--budget must be a positive number");
+  });
 });
