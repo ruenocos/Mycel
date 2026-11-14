@@ -44,6 +44,18 @@ describe("test-client fixtures", () => {
       expect(set.cases.filter((c) => c.expect === "drop").length).toBeGreaterThanOrEqual(8);
     });
 
+    it("has a held-out filter set that shares no query with the tuning set", () => {
+      const tuning = FilterEvalSet.parse(load(client, "filter-eval.json"));
+      const heldOut = FilterEvalSet.parse(load(client, "filter-holdout.json"));
+      expect(heldOut.client).toBe(client);
+      const fold = (q: string) => q.toLowerCase().trim();
+      const seen = new Set(tuning.cases.map((c) => fold(c.query)));
+      expect(heldOut.cases.filter((c) => seen.has(fold(c.query)))).toEqual([]);
+      expect(new Set(heldOut.cases.map((c) => fold(c.query))).size).toBe(heldOut.cases.length);
+      expect(heldOut.cases.length).toBeGreaterThanOrEqual(25);
+      expect(heldOut.cases.filter((c) => c.expect === "drop").length).toBeGreaterThanOrEqual(8);
+    });
+
     it("keeps off-topic terms out of the offerings", () => {
       const offered = context.offerings.join(" ").toLowerCase();
       for (const term of gate.offTopic) expect(offered).not.toContain(term);

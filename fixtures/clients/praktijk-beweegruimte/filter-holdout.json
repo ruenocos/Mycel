@@ -1,0 +1,155 @@
+{
+  "client": "praktijk-beweegruimte",
+  "cases": [
+    {
+      "query": "fysiotherapeut utrecht",
+      "expect": "keep",
+      "why": "core, local"
+    },
+    {
+      "query": "fysio utrecht lombok",
+      "expect": "keep",
+      "why": "core, their location"
+    },
+    {
+      "query": "sportfysio utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "manueel therapeut utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "bekkenfysiotherapie utrecht",
+      "expect": "keep",
+      "why": "core offering"
+    },
+    {
+      "query": "dry needling ervaringen",
+      "expect": "keep",
+      "why": "offering, before booking"
+    },
+    {
+      "query": "dry needling bijwerkingen",
+      "expect": "keep",
+      "why": "offering, before booking"
+    },
+    {
+      "query": "medische fitness vergoeding",
+      "expect": "keep",
+      "why": "offering, reimbursement"
+    },
+    {
+      "query": "wat doet een manueel therapeut",
+      "expect": "keep",
+      "why": "offering explained"
+    },
+    {
+      "query": "fysiotherapie eigen risico",
+      "expect": "keep",
+      "why": "reimbursement question"
+    },
+    {
+      "query": "fysiotherapie kosten per behandeling",
+      "expect": "keep",
+      "why": "cost question"
+    },
+    {
+      "query": "hernia fysiotherapie",
+      "expect": "keep",
+      "why": "complaint treatment"
+    },
+    {
+      "query": "nekpijn kantoorwerk",
+      "expect": "keep",
+      "why": "office-worker audience"
+    },
+    {
+      "query": "muisarm oefeningen",
+      "expect": "keep",
+      "why": "office-worker audience"
+    },
+    {
+      "query": "schouderpijn oefeningen",
+      "expect": "keep",
+      "why": "complaint how-to"
+    },
+    {
+      "query": "hardloopblessure knie",
+      "expect": "keep",
+      "why": "sports-injury audience"
+    },
+    {
+      "query": "enkel verzwikt wat te doen",
+      "expect": "keep",
+      "why": "sports injury"
+    },
+    {
+      "query": "bekkenpijn zwangerschap",
+      "expect": "keep",
+      "why": "complaint, bekken offering"
+    },
+    {
+      "query": "fysiotherapie rotterdam",
+      "expect": "drop",
+      "why": "another city"
+    },
+    {
+      "query": "fysiotherapeut zeist",
+      "expect": "drop",
+      "why": "another town"
+    },
+    {
+      "query": "fysiotherapie opleiding hu",
+      "expect": "drop",
+      "why": "education"
+    },
+    {
+      "query": "fysiotherapie studeren",
+      "expect": "drop",
+      "why": "education"
+    },
+    {
+      "query": "vacature fysiotherapeut",
+      "expect": "drop",
+      "why": "not this: jobs"
+    },
+    {
+      "query": "salaris fysiotherapeut",
+      "expect": "drop",
+      "why": "career"
+    },
+    {
+      "query": "fysiotherapie voor paarden",
+      "expect": "drop",
+      "why": "animals"
+    },
+    {
+      "query": "dierenfysiotherapeut",
+      "expect": "drop",
+      "why": "animals"
+    },
+    {
+      "query": "lombok indonesie",
+      "expect": "drop",
+      "why": "Lombok the island, not the area"
+    },
+    {
+      "query": "utrecht centraal vertrektijden",
+      "expect": "drop",
+      "why": "off topic"
+    },
+    {
+      "query": "zilveren kruis inloggen",
+      "expect": "drop",
+      "why": "navigational, insurer"
+    },
+    {
+      "query": "physical therapy exercises lower back",
+      "expect": "drop",
+      "why": "other language"
+    }
+  ]
+}
