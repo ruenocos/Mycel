@@ -39,9 +39,8 @@ export function ruleFor(q: Query, ctx: ClientContext, brands = brandTokens(ctx))
   if (/\b[a-z0-9-]+\.(nl|com|be|de|org|net|eu|io)\b/.test(q.text.toLowerCase())) {
     return { rule: "navigational", reason: "contains a web address" };
   }
-  if (q.language && q.language !== ctx.market.language) {
-    return { rule: "language", reason: `detected language ${q.language}` };
-  }
+  // No rule on q.language: DataforSEO's detected_language is mostly wrong on short queries
+  // ("fysiotherapie" → fi, "kamerplant" → en). The model judges language instead.
   for (const e of ctx.centralEntities) {
     for (const n of e.notThis) {
       if (hasPhrase(q.text, n)) return { rule: "not this", reason: `not this: ${n}` };

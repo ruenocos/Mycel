@@ -21,6 +21,9 @@ import { mergeDuplicates, ruleFor, scoreQueries } from "./rules.ts";
 
 export const FILTER_TEMPLATE = { id: "filter-classify", version: "1" } as const;
 
+/** Step logic version (rules + prompt); bump when either changes. 2: no drop on detected language. */
+export const FILTER_STEP_VERSION = "2";
+
 export const ClassifyAnswer = z.object({
   results: z.array(
     z.object({
@@ -94,7 +97,7 @@ type Label = { label: z.infer<typeof RelevanceLabel>; entity?: string; why?: str
 export function filterStep(llm: JsonModel) {
   return defineStep({
     name: "filter",
-    version: FILTER_TEMPLATE.version,
+    version: FILTER_STEP_VERSION,
     input: FilterInput,
     output: FilteredQueries,
     async run(input, ctx) {

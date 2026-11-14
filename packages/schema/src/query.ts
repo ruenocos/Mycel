@@ -35,7 +35,7 @@ export const Query = z.object({
   intent: z
     .enum(["informational", "commercial", "transactional", "navigational", "local"])
     .optional(),
-  /** Language the data provider detected (ISO 639-1); the noise filter drops wrong-language queries. */
+  /** Language the data provider guessed (ISO 639-1). Unreliable on short queries: kept as info, never a drop rule. */
   language: z.string().optional(),
   /** Which central entity this query belongs to (by name). */
   entity: z.string().optional(),

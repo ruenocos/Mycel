@@ -78,12 +78,13 @@ describe("rules", () => {
     expect(hasPhrase("erpgemeente", "erp gemeente")).toBe(false);
   });
 
-  it("drops junk, addresses, wrong language, not-this and own brand", () => {
+  it("drops junk, addresses, not-this and own brand, but trusts no detected language", () => {
     const rule = (text: string, extra: Partial<Query> = {}) => ruleFor(q(text, extra), erp)?.rule;
     expect(rule("123 456")).toBe("junk");
     expect(rule("a b c d e f g h i j k")).toBe("junk");
     expect(rule("exact.com inloggen")).toBe("navigational");
-    expect(rule("erp software", { language: "en" })).toBe("language");
+    // DataforSEO's language guess is unreliable on short queries; never a reason to drop.
+    expect(rule("erp software kosten", { language: "fi" })).toBeUndefined();
     expect(rule("ERP gemeente openingstijden")).toBe("not this");
     expect(rule("acme erp ervaringen")).toBe("own brand");
     expect(rule("erp software kosten", { language: "nl" })).toBeUndefined();
