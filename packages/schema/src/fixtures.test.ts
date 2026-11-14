@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ClientContext, FilterEvalSet, GateExpectations, SitePages } from "./index.ts";
@@ -10,6 +10,13 @@ const load = (client: string, file: string): unknown =>
 const clients = readdirSync(root, { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name);
+
+/**
+ * Blind test clients: added after tuning and never tuned on (fixtures/README.md). Their
+ * filter-eval.json already is a set nobody fitted the filter to, so they need no second,
+ * held-out set. Every other client must have one.
+ */
+const blindClients = new Set(["dakwerken-maasstad"]);
 
 describe("test-client fixtures", () => {
   it("has both test clients", () => {
@@ -45,6 +52,11 @@ describe("test-client fixtures", () => {
     });
 
     it("has a held-out filter set that shares no query with the tuning set", () => {
+      if (blindClients.has(client)) {
+        // Blind: its one set is never tuned on. A client that gets a held-out set leaves the list.
+        expect(existsSync(join(root, client, "filter-holdout.json"))).toBe(false);
+        return;
+      }
       const tuning = FilterEvalSet.parse(load(client, "filter-eval.json"));
       const heldOut = FilterEvalSet.parse(load(client, "filter-holdout.json"));
       expect(heldOut.client).toBe(client);
