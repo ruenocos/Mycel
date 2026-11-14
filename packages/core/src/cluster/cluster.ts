@@ -30,8 +30,12 @@ import { defineStep } from "../step.ts";
  * clusters are flagged for a person.
  */
 
-/** 2: relevance tiers (bridge never a page), variant and same-intent merges. */
-export const CLUSTER_VERSION = "2";
+/**
+ * 2: relevance tiers (bridge never a page), variant and same-intent merges.
+ * 3: same-topic merges (aliases), chain merges within one tier, a bridge needs a shared result
+ * with its host page or it leaves the map.
+ */
+export const CLUSTER_VERSION = "3";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -197,6 +201,8 @@ export interface ClusterInput {
 /** The pure clustering + QDP logic; the step around it fetches the SERPs. */
 export function clusterQueries(input: ClusterInput): {
   clusters: ClusterDetail[];
+  /** Queries that have no place in the map, with the reason (e.g. a bridge with no host). */
+  leftOut: { query: string; reason: string }[];
   stats: { ambiguousMembers: number; borderlineMembers: number; merged: number };
 } {
   const { options: o } = input;
@@ -271,12 +277,27 @@ export function clusterQueries(input: ClusterInput): {
       afterVariants.push(d);
     }
   }
-  const kept: Draft[] = [];
+  // Merge pass 1b: aliases. The filter model names each query's topic canonically ("Microsoft
+  // Dynamics NAV" for navision, microsoft nav, dynamics nav); same topic + a shared result = one.
+  const byTopic = new Map<string, Draft>();
+  const afterTopics: Draft[] = [];
   for (const d of afterVariants) {
+    const topic = d.hub.topic ? canonical(d.hub.topic) : "";
+    const first = topic ? byTopic.get(topic) : undefined;
+    if (first && intersect(d.hubKeys, first.hubKeys) >= 1) {
+      fold(first, d, `same topic as "${first.hub.text}" (${d.hub.topic})`);
+    } else {
+      if (topic && !first) byTopic.set(topic, d);
+      afterTopics.push(d);
+    }
+  }
+  const kept: Draft[] = [];
+  for (const d of afterTopics) {
     let target: Draft | undefined;
     let why = "";
     if (d.members.length <= 2) {
       for (const k of kept) {
+        if (tierOf(k.hub) !== tierOf(d.hub)) continue; // no drifting from outer into core etc.
         const viaHub = intersect(d.hubKeys, k.hubKeys);
         if (viaHub === 0) continue;
         const viaMember = Math.max(...k.members.map((m) => intersect(d.hubKeys, m.keys)));
@@ -401,14 +422,17 @@ export function clusterQueries(input: ClusterInput): {
     if (why.length) c.qdpWhy = `Own page: ${why.join(", ")}.`;
     return why.length > 0;
   });
+  const leftOut: { query: string; reason: string }[] = [];
   const weights = termWeights(clusters.map((c) => c.mainQuery));
   for (const c of clusters) {
     if (c.qdpWhy) continue;
+    const bridge = c.label === "bridge";
     let host: (typeof clusters)[number] | undefined;
     let bestScore = 0;
     let bestOverlap = 0;
     for (const p of pages) {
       const overlap = intersect(c._hubKeys, p._hubKeys);
+      if (bridge && overlap === 0) continue; // wording alone is too weak for a broader topic
       const score = overlap / o.minShared + termSimilarity(c.mainQuery, p.mainQuery, weights);
       if (score > bestScore) {
         bestScore = score;
@@ -417,7 +441,6 @@ export function clusterQueries(input: ClusterInput): {
       }
     }
     const hasDemand = c.demand.volume > 0 || c.demand.gscImpressions > 0;
-    const bridge = c.label === "bridge";
     const demandText = [
       c.demand.volume > 0 ? `${c.demand.volume} searches a month` : "",
       c.demand.gscImpressions > 0 ? `${c.demand.gscImpressions} impressions in Search Console` : "",
@@ -426,12 +449,14 @@ export function clusterQueries(input: ClusterInput): {
       .join(" and ");
     if (!host || bestScore < 0.25) {
       if (bridge) {
-        c.qdp = "micro";
-        c.qdpWhy = hasDemand
-          ? `Bridge topic (${demandText}): broader than the central entity, and no page is close enough to mention it on.`
-          : "Bridge topic with no search volume and no page close enough to mention it on.";
-        c.outlier = true;
-        c.outlierReasons.push("bridge topic with no close page: check if it belongs in the map");
+        // Broader than the central entity and no page shares a result with it: not in the map.
+        for (const m of c.members) {
+          leftOut.push({
+            query: m.query,
+            reason: `bridge topic with no page that shares a result with it${hasDemand ? ` (${demandText})` : ""}`,
+          });
+        }
+        c.qdpWhy = "left out";
       } else if (hasDemand) {
         c.qdp = "page";
         c.qdpWhy = `Own page by default: ${demandText}, and no existing page is close enough to host it.`;
@@ -466,8 +491,10 @@ export function clusterQueries(input: ClusterInput): {
       ? `Section on "${host.mainQuery}": too little demand for its own page (${demandText}), ${near}.`
       : `Micro context on "${host.mainQuery}": no measured demand, answer it in passing (FAQ), ${near}.`;
   }
+  const inMap = clusters.filter((c) => c.qdpWhy !== "left out");
   return {
-    clusters: clusters.map(({ _hubKeys, ...c }) => c),
+    leftOut,
+    clusters: inMap.map(({ _hubKeys, ...c }) => c),
     stats: { ambiguousMembers: ambiguous, borderlineMembers: borderline, merged },
   };
 }
@@ -506,13 +533,14 @@ export function clusterStep(port: SerpBatchPort) {
           unclustered.push({ query: q.text, reason: "no SERP returned" });
         }
       }
-      const { clusters, stats } = clusterQueries({
+      const { clusters, stats, leftOut } = clusterQueries({
         queries: kept.filter((q) => serps.has(q.text)),
         serps,
         siteHost: host,
         options: input.options,
         language: input.context.market.language,
       });
+      unclustered.push(...leftOut);
       const count = (k: ClusterDetail["qdp"]) => clusters.filter((c) => c.qdp === k).length;
       const out = {
         site: input.queries.site,
@@ -530,6 +558,7 @@ export function clusterStep(port: SerpBatchPort) {
           singletons: clusters.filter((c) => c.members.length === 1).length,
           outliers: clusters.filter((c) => c.outlier).length,
           bridges: clusters.filter((c) => c.label === "bridge" && c.qdp !== "page").length,
+          leftOut: leftOut.length,
           ...stats,
         },
       };

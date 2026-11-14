@@ -69,7 +69,7 @@ export const ClusterSet = z
     market: Market,
     minSharedUrls: z.number().int().positive(),
     clusters: z.array(ClusterDetail),
-    /** Kept queries without a usable SERP, with the reason. */
+    /** Kept queries that are not in a cluster: no usable SERP, or no place in the map. */
     unclustered: z.array(z.object({ query: z.string().min(1), reason: z.string().min(1) })),
     stats: z.object({
       queries: z.number().int().nonnegative(),
@@ -86,6 +86,8 @@ export const ClusterSet = z
       bridges: z.number().int().nonnegative().default(0),
       /** Clusters folded into another one (spelling variants, same intent). */
       merged: z.number().int().nonnegative().default(0),
+      /** Kept queries with no place in the map (in `unclustered`), e.g. bridges with no host. */
+      leftOut: z.number().int().nonnegative().default(0),
     }),
   })
   .superRefine((set, ctx) => {
