@@ -623,21 +623,58 @@ describe("DataforseoClient", () => {
   });
 
   it("posts a saved task again when DataforSEO no longer has it", async () => {
-    const { rec } = recorder();
-    const gone = client(
+    const { rec, warnings } = recorder();
+    const status = (code: number, message: string) =>
+      new Response(
+        JSON.stringify({
+          status_code: 20000,
+          status_message: "Ok.",
+          tasks: [{ status_code: code, status_message: message }],
+        }),
+      );
+    // Run 1 posts "old" and times out, so the id is saved.
+    const first = client(
       async (url) =>
         String(url).endsWith("/task_post")
           ? ok(null, 0.0006, { id: "old" })
-          : new Response(
-              JSON.stringify({
-                status_code: 20000,
-                status_message: "Ok.",
-                tasks: [{ status_code: 40401, status_message: "Task Not Found." }],
-              }),
-            ),
+          : status(40602, "Task In Queue."),
+      { allowLiveSerp: true, pollTimeoutMs: -1 },
+    );
+    await expect(first.serpOrganic("kamerplant", market, rec)).rejects.toThrow(/timeout/);
+
+    // Run 2: DataforSEO lost "old". With paid SERPs off that is a blocked SERP, not a crash...
+    const urls: string[] = [];
+    const answer = async (url: string | URL | Request) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.endsWith("/task_post")) return ok(null, 0.0006, { id: "new" });
+      return u.endsWith("/old") ? status(40401, "Task Not Found.") : ok(serpFixture, 0);
+    };
+    await expect(client(answer).serpOrganic("kamerplant", market, rec)).rejects.toBeInstanceOf(
+      LiveCallBlockedError,
+    );
+    expect(pendingFiles()).toEqual([]);
+    expect(warnings.at(-1)).toMatch(/can't be collected any more/);
+
+    // ...and with them on, a fresh task is posted and collected.
+    urls.length = 0;
+    const serp = await client(answer, { allowLiveSerp: true }).serpOrganic(
+      "kamerplant",
+      market,
+      rec,
+    );
+    expect(serp.organic).toHaveLength(2);
+    expect(urls.map((u) => u.split("/").at(-1))).toEqual(["task_post", "new"]);
+
+    // A fresh task that fails for good surfaces as an error and leaves nothing behind.
+    const broken = client(
+      async (url) =>
+        String(url).endsWith("/task_post")
+          ? ok(null, 0.0006, { id: "bad" })
+          : status(40401, "Task Not Found."),
       { allowLiveSerp: true },
     );
-    await expect(gone.serpOrganic("kamerplant", market, rec)).rejects.toBeInstanceOf(
+    await expect(broken.serpOrganic("monstera", market, rec)).rejects.toBeInstanceOf(
       DataforseoError,
     );
     expect(pendingFiles()).toEqual([]);

@@ -222,7 +222,30 @@ export class DataforseoClient {
     const hit = this.hit(endpoint, hash, rec);
     if (hit) return parseSerp(keyword, hit.result);
 
+    /** The task's result. A task that failed for good is forgotten, so it gets posted fresh. */
+    const collect = async (t: PendingTask): Promise<unknown> => {
+      try {
+        return await this.pollTask(`serp/google/organic/task_get/advanced/${t.taskId}`, rec, hash);
+      } catch (err) {
+        if (err instanceof DataforseoError && !err.retryable) this.tasks.delete(hash);
+        throw err;
+      }
+    };
     let task = this.savedTask(hash, rec);
+    let result: unknown;
+    if (task) {
+      try {
+        result = await collect(task);
+      } catch (err) {
+        // Still waiting, or the network is down: keep the saved task. Gone for good: post anew.
+        if (!(err instanceof DataforseoError) || err.retryable) throw err;
+        rec.log.warn("saved SERP task can't be collected any more, posting it again", {
+          taskId: task.taskId,
+          message: err.message,
+        });
+        task = null;
+      }
+    }
     if (!task) {
       if (!this.opts.allowLiveSerp) {
         throw new LiveCallBlockedError(
@@ -230,18 +253,7 @@ export class DataforseoClient {
         );
       }
       task = await this.postSerpTask(endpoint, payload, hash, rec);
-    }
-    let result: unknown;
-    try {
-      result = await this.pollTask(
-        `serp/google/organic/task_get/advanced/${task.taskId}`,
-        rec,
-        hash,
-      );
-    } catch (err) {
-      // A task DataforSEO no longer has (or that failed for good) is posted fresh next time.
-      if (err instanceof DataforseoError && !err.retryable) this.tasks.delete(hash);
-      throw err;
+      result = await collect(task);
     }
     this.cache.set(hash, {
       endpoint,
