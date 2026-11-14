@@ -290,6 +290,37 @@ describe("relevance tiers and merges", () => {
     expect(r.clusters[0]?.demand.volume).toBe(1700);
   });
 
+  it("matches topics regardless of case, word order and plurals", () => {
+    const t = (text: string, topic: string, volume: number) => ({ ...q(text, { volume }), topic });
+    const r = run(
+      [
+        t("kosten fysiotherapie", "Physiotherapy costs", 2000),
+        t("kosten van fysiotherapie", "cost of physiotherapy", 900),
+      ],
+      [
+        serp("kosten fysiotherapie", ["1", "2", "3", "4", "5", "6"]),
+        serp("kosten van fysiotherapie", ["10", "11", "12", "13", "14", "15"]),
+      ],
+    );
+    expect(r.clusters).toHaveLength(1);
+  });
+
+  it("folds a hub that is a spelling variant of another cluster's member", () => {
+    const r = run(
+      [
+        q("software groothandel", { volume: 200, label: "core", relevance: 1 }),
+        q("groothandel erp", { volume: 90, label: "core", relevance: 1 }),
+        q("groothandel software", { volume: 50, label: "outer" }),
+      ],
+      [
+        serp("software groothandel", ["1", "2", "3", "4", "5", "6"]),
+        serp("groothandel erp", ["1", "2", "3", "7", "8", "9"]),
+        serp("groothandel software", ["20", "21", "22", "23", "24", "25"]),
+      ],
+    );
+    expect(r.clusters).toHaveLength(1);
+  });
+
   it("never names a cluster after a bridge query", () => {
     const r = run(
       [
