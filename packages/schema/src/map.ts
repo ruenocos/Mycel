@@ -4,10 +4,35 @@ import { CentralEntity } from "./context.ts";
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
 export const LinkOut = z.object({
   to: z.string().min(1),
-  type: z.enum(["to_core", "sibling", "bridge", "from_home"]),
+  /**
+   * to_core: up to the core (Koray step 20). parent / child: the hub and its pages. sibling: pages
+   * under one hub. bridge: a side link between two hubs (contextual bridge). from_home: the
+   * homepage links to a quality node (step 13).
+   */
+  type: z.enum(["to_core", "parent", "child", "sibling", "bridge", "from_home"]),
   anchor: z.string().min(1).optional(),
 });
 export type LinkOut = z.infer<typeof LinkOut>;
+
+/** Search intent of a page: from the queries' data and the results page, the model only breaks ties. */
+export const PageIntent = z.object({
+  main: z.enum(["informational", "commercial", "transactional", "navigational", "local"]),
+  /** A second intent is nearly as strong: often worth two pages (a cost guide and a service page). */
+  mixed: z.boolean(),
+  /** What decided it: query data and SERP features, or only the tier when there was no data. */
+  source: z.enum(["data", "tier"]),
+});
+export type PageIntent = z.infer<typeof PageIntent>;
+
+/** A cluster that doesn't get its own page: a section on this page, or micro context. */
+export const MapSection = z.object({
+  clusterId: z.string().min(1),
+  mainQuery: z.string().min(1),
+  qdp: z.enum(["section", "micro"]),
+  queries: z.array(z.string()).default([]),
+  volume: z.number().int().nonnegative().default(0),
+});
+export type MapSection = z.infer<typeof MapSection>;
 
 export const MapNode = z.object({
   id: z.string().min(1),
@@ -21,6 +46,9 @@ export const MapNode = z.object({
   clusterId: z.string().optional(),
   mainQuery: z.string().min(1),
   queries: z.array(z.string()).default([]),
+  /** Clusters answered on this page instead of their own (QDP, step 10). */
+  sections: z.array(MapSection).default([]),
+  intent: PageIntent,
   proposedUrl: z.string().regex(/^\/[a-z0-9\-/]*$/, "lowercase slug path starting with /"),
   /** Null means a new page. */
   existingPage: z
@@ -98,6 +126,22 @@ export const TopicalMap = z
           path: ["nodes", i, "linksOut"],
           message: `outer node ${n.id} must link to a core node`,
         });
+    }
+    for (const [i, n] of map.nodes.entries()) {
+      const seen = new Set<string>([n.id]);
+      let p = n.parentId ? byId.get(n.parentId) : undefined;
+      while (p) {
+        if (seen.has(p.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["nodes", i, "parentId"],
+            message: `parent loop at ${n.id}`,
+          });
+          break;
+        }
+        seen.add(p.id);
+        p = p.parentId ? byId.get(p.parentId) : undefined;
+      }
     }
     if (!map.nodes.some((n) => n.level === "root"))
       ctx.addIssue({ code: "custom", path: ["nodes"], message: "map needs a root node" });
