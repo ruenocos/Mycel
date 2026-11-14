@@ -38,8 +38,10 @@ import { defineStep } from "../step.ts";
  * 5: topics snap to the central entity's name; a topic that is the entity itself only merges
  *    plain-name queries without a shared result; bridges don't add to a page's demand; the main
  *    query prefers the plain form.
+ * 6: variant keys of every member count (not only hubs); topic keys ignore case, word order and
+ *    plurals; a bridge can sit on the page with its own topic without a shared result.
  */
-export const CLUSTER_VERSION = "5";
+export const CLUSTER_VERSION = "6";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -279,26 +281,33 @@ export function clusterQueries(input: ClusterInput): {
     const first = key ? byKey.get(key) : undefined;
     if (first) fold(first, d, `spelling variant of "${first.hub.text}"`);
     else {
-      if (key) byKey.set(key, d);
+      // Every member's form counts: "groothandel software" may be a member elsewhere.
+      for (const m of d.members) {
+        const k = variantKey(m.q.text, language);
+        if (k && !byKey.has(k)) byKey.set(k, d);
+      }
       afterVariants.push(d);
     }
   }
   // Merge pass 1b: aliases. The filter model names each query's topic canonically ("Microsoft
   // Dynamics NAV" for navision, microsoft nav, dynamics nav); same topic = one cluster.
-  const entityTokens = (input.entities ?? []).map(
+  const entityRaw = (input.entities ?? []).map(
     (e) => new Set(canonical(e).split(" ").filter(Boolean)),
   );
-  const entityNames = (input.entities ?? []).map(canonical);
+  // Topics are English by contract; keys ignore case, word order, small words and plurals.
+  const topicKey = (t: string) => variantKey(t, "en");
+  const entityNames = (input.entities ?? []).map(topicKey);
+  const entityTokens = entityNames.map((k) => new Set(k.split(" ").filter(Boolean)));
   const subset = (a: string[], b: Set<string>) => a.length > 0 && a.every((t) => b.has(t));
   /** A short form of a central entity's name ("business central") snaps to the full name. */
   const topicOf = (q: FilteredQuery) => {
-    const t = q.topic ? canonical(q.topic) : "";
+    const t = q.topic ? topicKey(q.topic) : "";
     const i = entityTokens.findIndex((set) => subset(t.split(" "), set));
     return i >= 0 ? (entityNames[i] as string) : t;
   };
   /** The query is just a name of the entity ("microsoft business central"), nothing more. */
   const plainName = (q: FilteredQuery) =>
-    entityTokens.some((set) => subset(canonical(q.text).split(" "), set));
+    entityRaw.some((set) => subset(canonical(q.text).split(" "), set));
   const byTopicTier = new Map<string, Draft>();
   const byTopic = new Map<string, Draft>();
   const afterTopics: Draft[] = [];
@@ -479,6 +488,7 @@ export function clusterQueries(input: ClusterInput): {
     return why.length > 0;
   });
   const leftOut: { query: string; reason: string }[] = [];
+  const hubTopic = new Map(kept.map((d) => [d.hub.text, topicOf(d.hub)]));
   const weights = termWeights(clusters.map((c) => c.mainQuery));
   for (const c of clusters) {
     if (c.qdpWhy) continue;
@@ -488,7 +498,9 @@ export function clusterQueries(input: ClusterInput): {
     let bestOverlap = 0;
     for (const p of pages) {
       const overlap = intersect(c._hubKeys, p._hubKeys);
-      if (bridge && overlap === 0) continue; // wording alone is too weak for a broader topic
+      // Wording alone is too weak for a broader topic; a shared result or the same topic is needed.
+      const sameTopic = !!hubTopic.get(c.hub) && hubTopic.get(c.hub) === hubTopic.get(p.hub);
+      if (bridge && overlap === 0 && !sameTopic) continue;
       const score = overlap / o.minShared + termSimilarity(c.mainQuery, p.mainQuery, weights);
       if (score > bestScore) {
         bestScore = score;
