@@ -32,12 +32,22 @@ interface Offer {
   id: string;
   top: boolean;
   keys: Set<string>[];
+  /** The site's own page for it (a path). */
+  page?: string;
 }
 
-/** Every way an offering can be named: its name, sub-offerings and attribute values with the name. */
+/**
+ * Every way an offering can be named: its name and sub-offerings. The business's own name is left
+ * out of the keys ("De Saak DMS" is searched as "dms").
+ */
 function offers(ctx: ClientContext, profile: BusinessProfile | undefined): Offer[] {
   const lang = ctx.market.language;
-  const t = (s: string) => tokens(s, lang);
+  const own = tokens(ctx.site.name, lang);
+  const t = (s: string) => {
+    const all = tokens(s, lang);
+    const kept = new Set([...all].filter((w) => !own.has(w)));
+    return kept.size ? kept : all;
+  };
   if (!profile) {
     return ctx.offerings.map((o) => ({ id: o, top: true, keys: [t(o)] }));
   }
@@ -45,8 +55,17 @@ function offers(ctx: ClientContext, profile: BusinessProfile | undefined): Offer
     id: o.id,
     top: o.value === "top",
     keys: [o.name, ...o.subOfferings].map(t).filter((k) => k.size > 0),
+    ...(o.page ? { page: o.page } : {}),
   }));
 }
+
+const pathOf = (url: string) => {
+  try {
+    return new URL(url, "https://x.invalid").pathname;
+  } catch {
+    return url;
+  }
+};
 
 const nodeWords = (n: Node, lang: string) =>
   tokens([n.mainQuery, n.name ?? "", ...n.queries].join(" "), lang);
@@ -54,9 +73,15 @@ const nodeWords = (n: Node, lang: string) =>
 const covers = (words: Set<string>, key: Set<string>) =>
   key.size > 0 && [...key].every((k) => words.has(k));
 
-/** The offering a page serves: its offeringId, else the first offering whose name its searches contain. */
+/**
+ * The offering a page serves: its offeringId; else the offering whose own site page it is; else
+ * the first offering whose name its searches contain.
+ */
 function offerOf(n: Node, all: Offer[], lang: string): Offer | undefined {
   if (n.offeringId) return all.find((o) => o.id === n.offeringId);
+  const url = n.existingPage?.url;
+  const byPage = url ? all.find((o) => o.page && o.page === pathOf(url)) : undefined;
+  if (byPage) return byPage;
   const words = nodeWords(n, lang);
   return all.find((o) => o.keys.some((k) => covers(words, k)));
 }

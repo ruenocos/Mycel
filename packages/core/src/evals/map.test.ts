@@ -174,6 +174,47 @@ describe("evalMap", () => {
     expect(e.metrics.nowNotTied.examples).toEqual(["fysiotherapie utrecht"]);
   });
 
+  it("ties a page to an offering by its site page or by the name without the brand", () => {
+    const offering = {
+      kind: "service" as const,
+      subOfferings: [],
+      attributes: [],
+      audiences: [],
+      places: [],
+      proofPoints: [],
+      value: "top" as const,
+      sources: [{ from: "site" as const, confidence: "high" as const }],
+      unknown: [],
+      status: "confirmed" as const,
+    };
+    const ctx: ClientContext = {
+      ...context,
+      business: {
+        offerings: [
+          { ...offering, id: "praktijk-planner", name: "Praktijk Planner", page: "/planner/" },
+          { ...offering, id: "praktijk-taping", name: "Praktijk Taping" },
+        ],
+        notOffered: [],
+        places: { locations: [], serves: [], nationwide: false },
+        differentiators: [],
+        facts: [],
+        brand: { own: [], neverTarget: [], avoidWords: [] },
+        siteTerms: [],
+        openQuestions: [],
+      },
+    };
+    const e = run(
+      maps([
+        node("agenda-tool", {
+          existingPage: { url: "https://praktijk.example/planner/", matchScore: 1 },
+        }),
+        node("taping"),
+      ]),
+      ctx,
+    );
+    expect(e.metrics.coreWithoutOffering.value).toBe(0);
+  });
+
   it("counts outside pages with a planned twin and existing pages with a job", () => {
     const e = run(
       maps(
