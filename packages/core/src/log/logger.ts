@@ -20,6 +20,7 @@ export function fileSink(path: string): LogSink {
   return { write: (line) => appendJsonLine(path, line) };
 }
 
+/** Mirrors log lines to the console while a run is going (--debug). */
 export function consoleSink(minLevel: LogLevel = "info"): LogSink {
   return {
     write(line) {
@@ -28,9 +29,8 @@ export function consoleSink(minLevel: LogLevel = "info"): LogSink {
       const data = line.data ? ` ${JSON.stringify(line.data)}` : "";
       const err = line.err ? ` ${line.err.name}: ${line.err.message}` : "";
       const out = `${line.ts.slice(11, 23)} ${line.level.padEnd(5)}${where} ${line.msg}${data}${err}`;
-      (line.level === "error" || line.level === "warn" ? process.stderr : process.stdout).write(
-        `${out}\n`,
-      );
+      // Always stderr: stdout is the result of a command, and stays the same with --debug on.
+      process.stderr.write(`${out}\n`);
     },
   };
 }

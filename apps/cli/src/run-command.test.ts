@@ -12,6 +12,7 @@ import {
 } from "@mycel/connectors";
 import { ERROR_CODES, MycelError, RunStore } from "@mycel/core";
 import { ClusterSet } from "@mycel/schema";
+import type { Command } from "commander";
 import { describe, expect, it } from "vitest";
 import { describeError, EXIT_CODES } from "./errors.ts";
 import { command, readInput } from "./input.ts";
@@ -252,7 +253,21 @@ describe("mycel, end to end in-process", () => {
     expect(help).toMatch(/75 {2}temporary/);
     // The command list follows the pipeline too.
     const listed = program.commands.map((c) => c.name());
-    expect(listed.slice(0, 5)).toEqual(["context", "research", "filter", "cluster", "map"]);
+    const pipeline = ["context", "research", "filter", "cluster", "map"];
+    // Other commands may sit in between (a new step), as long as these keep their order.
+    expect(listed.filter((name) => pipeline.includes(name))).toEqual(pipeline);
+    expect(listed.indexOf("map")).toBeLessThan(listed.indexOf("logs"));
+    expect(help).toContain("mycel llm ping");
+    expect(help).toContain("DATAFORSEO_LOGIN");
+    // Every command that can fail takes --debug.
+    const leaves = (cmds: readonly Command[]): Command[] =>
+      cmds.flatMap((c) => (c.commands.length > 0 ? leaves(c.commands) : [c]));
+    for (const cmd of leaves(program.commands)) {
+      expect(
+        cmd.options.map((o) => o.long),
+        cmd.name(),
+      ).toContain("--debug");
+    }
     for (const name of ["research", "filter", "cluster", "map", "logs"]) {
       let text = "";
       const cmd = program.commands.find((c) => c.name() === name);

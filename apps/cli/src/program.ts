@@ -19,7 +19,7 @@ const usd = (n: number) => `$${n.toFixed(4)}`;
 
 const provider = () =>
   new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama");
-const DEBUG = ["--debug", "mirror logs to the console, and show the stack of an error"] as const;
+const DEBUG = ["--debug", "follow the log on stderr, and show the stack of an error"] as const;
 const UNCONFIRMED = [
   "--allow-unconfirmed",
   "run on a context nobody confirmed yet (dry run)",
@@ -37,6 +37,15 @@ A typical run, in order (every command prints the next one with its paths filled
   mycel cluster clients/example.com/queries.json --live-serp --budget 3
   mycel map clients/example.com/clusters.json
   mycel logs latest
+
+Keys live in .env (.env.example lists every key). Check them before a paid run:
+  mycel llm ping     OLLAMA_API_KEY: the model that reads and writes
+  mycel gsc check    GSC_CREDENTIALS_PATH, GSC_PROPERTY: Search Console (optional, --no-gsc)
+  DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD: search data for research and cluster --live-serp
+  (context propose uses it when set; --no-dataforseo leaves it out)
+
+Every run is saved under --runs-dir (default: runs/). Add --debug to any command to follow
+the log on stderr while it runs; mycel logs <run> --level debug shows it afterwards.
 
 Exit codes:
    0  done
@@ -163,9 +172,10 @@ export function buildProgram(
     .description("Go through a proposed context in the terminal: keep or edit every answer")
     .argument("<file>", "context.json written by mycel context propose")
     .option("--by <name>", "who confirms (default: your OS user name)")
+    .option(...DEBUG)
     .addHelpText("after", examples("mycel context confirm clients/example.com/context.json"))
-    .action((file: string, opts: { by?: string }) =>
-      run({}, async () => {
+    .action((file: string, opts: { by?: string; debug?: boolean }) =>
+      run(opts, async () => {
         const by = opts.by ?? process.env.USERNAME ?? process.env.USER ?? "unknown";
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
@@ -390,12 +400,13 @@ export function buildProgram(
         .choices(["debug", "info", "warn", "error"])
         .default("info"),
     )
+    .option(...DEBUG)
     .addHelpText(
       "after",
       examples("mycel logs", "mycel logs latest", "mycel logs 2026-11-14T08 --level warn"),
     )
-    .action((runArg: string | undefined, opts: { level: LogLevel }) =>
-      run({}, () => {
+    .action((runArg: string | undefined, opts: { level: LogLevel; debug?: boolean }) =>
+      run(opts, () => {
         if (!runArg) {
           const runs = listRuns(runsDir()).slice(0, 15);
           if (runs.length === 0) return { ok: true, lines: [`No runs in ${runsDir()}.`] };
@@ -483,8 +494,9 @@ export function buildProgram(
     .description("Unblind the filled-in scores.csv and apply the decision rule")
     .argument("<run>", 'run id, unique prefix, or "latest"')
     .option("--candidate <model>", "the cheap model that should win", DEFAULT_MODEL)
-    .action((runArg: string, opts: { candidate: string }) =>
-      run({}, () => ({
+    .option(...DEBUG)
+    .action((runArg: string, opts: { candidate: string; debug?: boolean }) =>
+      run(opts, () => ({
         ok: true,
         lines: writingScore({ runsDir: runsDir(), run: runArg, candidate: opts.candidate }).lines,
       })),
