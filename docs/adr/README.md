@@ -18,4 +18,5 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0012 | DeepSeek V4.1 Flash writes the Dutch content (writing test #12)           |
 | 0013 | English inside (prompts, reasoning, step data), market language out       |
 | 0014 | Business profile first: AI fills in with proof, the owner confirms        |
+| 0015 | CLI output contract: one runner, `--json`, exit codes, next step          |
 | 0016 | Site sections: a page has a topic and a page type                         |

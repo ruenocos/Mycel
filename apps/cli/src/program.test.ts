@@ -4,13 +4,22 @@ import { join } from "node:path";
 import { readRunMeta } from "@mycel/core";
 import { describe, expect, it } from "vitest";
 import { describeError } from "./errors.ts";
-import { buildProgram } from "./program.ts";
+import { buildProgram, runCli } from "./program.ts";
 
 describe("mycel cli", () => {
-  it("is named mycel and has a version", () => {
-    const program = buildProgram();
-    expect(program.name()).toBe("mycel");
-    expect(program.version()).toMatch(/^\d+\.\d+\.\d+$/);
+  it("is named mycel, and --version names the version and the commit of the code", async () => {
+    expect(buildProgram().name()).toBe("mycel");
+    const lines: string[] = [];
+    let exitCode = -1;
+    await runCli(["node", "mycel", "--version"], (s) => lines.push(s), {
+      setExitCode: (c) => {
+        exitCode = c;
+      },
+    });
+    expect(lines).toHaveLength(1);
+    // The commit is there in a git checkout, which is how Mycel runs today.
+    expect(lines[0]).toMatch(/^\d+\.\d+\.\d+( \(commit [0-9a-f]{7,}\))?$/);
+    expect(exitCode).toBe(0);
   });
 });
 

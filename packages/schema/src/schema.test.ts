@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ClientContext,
+  CliOutput,
   Cluster,
   type MapNode,
   normalizeQuery,
@@ -142,5 +143,38 @@ describe("TopicalMap checks", () => {
     expect(
       TopicalMap.safeParse({ header, nodes: [{ ...root, proposedUrl: "/Kamer Planten" }] }).success,
     ).toBe(false);
+  });
+});
+
+describe("CliOutput", () => {
+  const ok = {
+    status: "ok",
+    command: "cluster",
+    version: "0.0.0+a07b883",
+    exitCode: 0,
+    outputs: { clusters: "clients/x/clusters.json" },
+    summary: ["clusters    12: 9 pages, 2 sections, 1 micro"],
+    costUsd: 0.006,
+    steps: [],
+    warnings: [],
+    next: [{ command: "mycel map clients/x/clusters.json" }],
+  };
+  const error = { code: "INPUT_MISSING", message: "no queries file at x", transient: false };
+
+  it("accepts a result and a failure, and ignores a field it doesn't know yet", () => {
+    expect(CliOutput.safeParse(ok).success).toBe(true);
+    const failed = { ...ok, status: "failed", exitCode: 3, next: [], error };
+    expect(CliOutput.safeParse(failed).success).toBe(true);
+    // Fields are added over time (ADR 0015): an older reader must not choke on a newer output.
+    expect(CliOutput.safeParse({ ...ok, somethingNew: 1 }).success).toBe(true);
+  });
+
+  it("keeps status, error and exit code in step with each other", () => {
+    expect(CliOutput.safeParse({ ...ok, error }).success).toBe(false);
+    expect(CliOutput.safeParse({ ...ok, status: "failed", exitCode: 3 }).success).toBe(false);
+    expect(CliOutput.safeParse({ ...ok, exitCode: 1 }).success).toBe(false);
+    expect(CliOutput.safeParse({ ...ok, status: "failed", exitCode: 0, error }).success).toBe(
+      false,
+    );
   });
 });

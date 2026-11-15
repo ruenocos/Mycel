@@ -251,5 +251,15 @@ export async function filterEval(
           { fix: "see the misses above; tune on the tuning set only" },
         )
       : undefined);
-  return { ok, scores, lines, ...(failure !== undefined ? { failure } : {}) };
+  return {
+    ok,
+    scores,
+    lines,
+    // The misses stay in the summary lines; the numbers are enough to compare two runs.
+    data: {
+      minAccuracy,
+      scores: scores.map(({ misses: _misses, ...numbers }) => numbers),
+    },
+    ...(failure !== undefined ? { failure } : {}),
+  };
 }

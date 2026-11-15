@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   CORE_VERSION,
-  formatTimeline,
   mapEvalStep,
   mapReviewPrompt,
   type PageRef,
@@ -12,24 +11,31 @@ import {
   runStep,
   type SerpBatchPort,
 } from "@mycel/core";
-import { MAP_METRICS, MAP_TARGETS, type MapEval, SiteMaps } from "@mycel/schema";
+import { MAP_METRICS, MAP_TARGETS, type MapEval, type MapMetricId, SiteMaps } from "@mycel/schema";
+import { z } from "zod";
 import { readContextWithBusiness } from "./business.ts";
 import { dataforseoFromEnv } from "./dataforseo.ts";
+import { readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel eval map <topical-map.json>` (issue #42, step 0). Scores a map on fixed numbers. SERPs
  * come from the cache only: paid SERP calls are always off here, so the eval costs nothing.
  */
 
-const readJson = (path: string) => {
-  if (!existsSync(path)) throw new Error(`no file at ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
-};
+const MAP_FILE = { name: "topical map", writtenBy: "mycel map" };
+const PAGES_SOURCE = { name: "pages or research file", writtenBy: "mycel research" };
 
 function readPages(path: string): PageRef[] {
-  const raw = readJson(path) as { pages?: unknown };
-  if (!Array.isArray(raw.pages)) throw new Error(`${path} has no pages list`);
-  return raw.pages as PageRef[];
+  return readInput(path, z.object({ pages: z.array(z.unknown()) }), PAGES_SOURCE)
+    .pages as PageRef[];
+}
+
+/** True when a number is on the wrong side of its round-8 target. No value, no verdict. */
+function missesTarget(id: MapMetricId, value: number | null): boolean {
+  const t = MAP_TARGETS[id];
+  if (value === null) return false;
+  return (t.max !== undefined && value > t.max) || (t.min !== undefined && value < t.min);
 }
 
 const fmt = (v: number | null, share: boolean) =>
@@ -54,7 +60,7 @@ export function evalLines(e: MapEval): string[] {
     const ok =
       m.value === null
         ? "    "
-        : (t.max !== undefined && m.value > t.max) || (t.min !== undefined && m.value < t.min)
+        : missesTarget(id, m.value)
           ? "MISS"
           : t.max === undefined && t.min === undefined
             ? "    "
@@ -85,10 +91,15 @@ export interface EvalMapOptions {
   port?: SerpBatchPort;
 }
 
-export async function evalMapRun(opts: EvalMapOptions) {
+export interface EvalMapResult extends CommandResult {
+  runId: string;
+  out?: string;
+}
+
+export async function evalMapRun(opts: EvalMapOptions): Promise<EvalMapResult> {
   const env = opts.env ?? process.env;
   const dir = dirname(opts.mapFile);
-  const maps = SiteMaps.parse(readJson(opts.mapFile));
+  const maps = readInput(opts.mapFile, SiteMaps, MAP_FILE);
   const contextFile = opts.contextFile ?? join(dir, "context.json");
   // The confirmed business profile (business.json next to the context) when there is one.
   const context = readContextWithBusiness(contextFile);
@@ -107,7 +118,7 @@ export async function evalMapRun(opts: EvalMapOptions) {
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: maps.site.replace(/^https?:\/\//, "").replace(/\/.*$/, ""),
-    command: "eval-map",
+    command: "eval map",
     cliVersion: CORE_VERSION,
     config: { map: opts.mapFile, context: contextFile, pages: pagesFile ?? null },
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
@@ -116,6 +127,8 @@ export async function evalMapRun(opts: EvalMapOptions) {
   if (!pagesFile) lines.push("note        no pages: the existing-page numbers are empty");
   if (!port) lines.push("note        no DataforSEO login: the overlap number is empty");
   let out: string | undefined;
+  let data: Record<string, unknown> | undefined;
+  const outputs: Record<string, string> = {};
   let failure: unknown;
   try {
     const result = await runStep(run, mapEvalStep(port), {
@@ -128,24 +141,29 @@ export async function evalMapRun(opts: EvalMapOptions) {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
     lines.push(...evalLines(result));
-    lines.push(`eval        ${out}`);
+    outputs.eval = out;
+    data = {
+      withProfile: result.withProfile,
+      metrics: Object.fromEntries(MAP_METRICS.map((id) => [id, result.metrics[id].value])),
+      missed: MAP_METRICS.filter((id) => missesTarget(id, result.metrics[id].value)),
+    };
     if (opts.review) {
       for (const persona of Object.keys(REVIEW_PERSONAS) as ReviewPersona[]) {
         const file = join(dirname(out), `map-review.${persona}.txt`);
         writeFileSync(file, `${mapReviewPrompt(persona, maps, context)}\n`);
-        lines.push(`review      ${file}`);
+        outputs[`review ${persona}`] = file;
       }
     }
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out ? { out, outputs } : {}),
+    ...(data ? { data } : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }

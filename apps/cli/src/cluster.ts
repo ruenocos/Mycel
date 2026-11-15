@@ -105,6 +105,7 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
     return {
       ok: true,
       lines: serpPlanLines(plan, budgetUsd, env, "one per kept query"),
+      data: { plan: { ...plan }, budgetUsd },
       next,
     };
   }

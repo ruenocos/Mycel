@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { RunStore } from "./log/run-store.ts";
-import { defineStep, runStep, StepValidationError } from "./step.ts";
+import { defineStep, runStep, StepValidationError, savedStepVersion } from "./step.ts";
 
 let runsDir: string;
 const newRun = () =>
@@ -112,5 +112,19 @@ describe("runStep", () => {
       n: 10,
     });
     expect(ran).toBe(false);
+  });
+
+  it("can say which version of a step a run saved, without reading the whole output", async () => {
+    const big = defineStep({
+      name: "big",
+      version: "12",
+      input: z.object({}),
+      output: z.object({ rows: z.array(z.string()) }),
+      run: async () => ({ rows: Array.from({ length: 5000 }, (_, i) => `row ${i}`) }),
+    });
+    const run = newRun();
+    await runStep(run, big, {});
+    expect(savedStepVersion(run.dir, "big")).toBe("12");
+    expect(savedStepVersion(run.dir, "never-ran")).toBeUndefined();
   });
 });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { SerpBatchPort } from "@mycel/core";
 import { MapEval } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
+import { describeError } from "./errors.ts";
 import { evalMapRun } from "./eval-map.ts";
 import { mapRun } from "./map.ts";
 
@@ -108,5 +109,26 @@ describe("mycel eval map", () => {
     expect(res.lines.join("\n")).toContain("page pairs sharing 3+ top-10 results");
     expect(existsSync(join(dir, "map-review.seo.txt"))).toBe(true);
     expect(existsSync(join(dir, "map-review.owner.txt"))).toBe(true);
+    // Its files are named for the runner, and the numbers are there for --json.
+    expect(res.outputs).toEqual({
+      eval: join(dir, "map-eval.json"),
+      "review seo": join(dir, "map-review.seo.txt"),
+      "review owner": join(dir, "map-review.owner.txt"),
+    });
+    expect(res.data).toMatchObject({
+      metrics: { duplicateIntentPairs: 1 },
+      missed: expect.arrayContaining(["duplicateIntentPairs"]),
+    });
+
+    // A missing map is an input error with a fix, raised before any run starts.
+    const missing = await evalMapRun({
+      runsDir: join(dir, "runs"),
+      mapFile: join(dir, "nope.json"),
+    }).catch((err: unknown) => describeError(err));
+    expect(missing).toMatchObject({
+      code: "INPUT_MISSING",
+      message: `no topical map at ${join(dir, "nope.json")}`,
+      fix: "run mycel map first, or pass the path of the file it wrote",
+    });
   });
 });

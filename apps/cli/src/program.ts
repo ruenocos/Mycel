@@ -1,13 +1,14 @@
 import { createInterface } from "node:readline/promises";
 import {
-  CORE_VERSION,
   formatTimeline,
   type LogLevel,
   listRuns,
+  MycelError,
   resolveRunId,
   runStatus,
+  summarizeRun,
 } from "@mycel/core";
-import { Command, Option } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { businessApply, businessPropose, businessScore, businessSimulate } from "./business.ts";
 import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
@@ -19,7 +20,9 @@ import { command } from "./input.ts";
 import { llmPing } from "./llm-ping.ts";
 import { mapRun } from "./map.ts";
 import { research } from "./research.ts";
-import { type CommandIo, type CommandResult, runCommand } from "./run-command.ts";
+import { type CommandIo, type CommandResult, jsonOutput, runCommand } from "./run-command.ts";
+import { statusRun } from "./status.ts";
+import { cliVersion, versionLine } from "./version.ts";
 
 /** The model that writes (ADR 0012). One place, so a switch is one edit. */
 export const DEFAULT_MODEL = "deepseek-v4.1-flash";
@@ -38,6 +41,25 @@ const DRY_RUN = [
   "--dry-run",
   "show what the run would cost and stop: nothing is bought, no file is written",
 ] as const;
+
+/** Added to every command at the end of buildProgram(), so a new command can't forget it. */
+const JSON_FLAG = [
+  "--json",
+  "print the result as one JSON object on stdout and nothing else (ADR 0015)",
+] as const;
+
+const USAGE_FIX = "mycel --help shows the commands, their order and the exit codes";
+
+/** Every command that does something: the ends of the command tree. */
+export const leafCommands = (cmds: readonly Command[]): Command[] =>
+  cmds.flatMap((c) => (c.commands.length > 0 ? leafCommands(c.commands) : [c]));
+
+/** "eval filter": a command as it is typed after `mycel`. */
+function commandPath(cmd: Command): string {
+  const names: string[] = [];
+  for (let c: Command | null = cmd; c?.parent; c = c.parent) names.unshift(c.name());
+  return names.join(" ");
+}
 
 const examples = (...lines: string[]) => `\nExamples:\n${lines.map((l) => `  ${l}`).join("\n")}\n`;
 
@@ -61,8 +83,15 @@ Keys live in .env (.env.example lists every key). Check them before a paid run:
 Before a paid run, ask what it costs: add --dry-run to research or cluster. A research run
 that failed continues with --resume <run>. A cluster run just runs again: the cache has it.
 
+Lost track of a client? mycel status clients/example.com says which files are there, which
+are out of date, and which command comes next.
+
 Every run is saved under --runs-dir (default: runs/). Add --debug to any command to follow
 the log on stderr while it runs; mycel logs <run> --level debug shows it afterwards.
+
+For a script or an agent: add --json to any command. stdout is then one JSON object (status,
+outputs, costUsd, warnings, next; on failure error with code, message, fix, transient) and
+nothing else. Progress and logs stay on stderr. The fields are in docs/adr/0015.
 
 Exit codes:
    0  done
@@ -77,24 +106,29 @@ Exit codes:
  130  interrupted (Ctrl+C); 143 when the process was told to stop
 `;
 
+type PartialIo = Partial<Omit<CommandIo, "out">>;
+
+const commandIo = (out: (s: string) => void, io: PartialIo): CommandIo => ({
+  out,
+  err: io.err ?? ((s) => console.error(s)),
+  setExitCode:
+    io.setExitCode ??
+    ((code) => {
+      process.exitCode = code;
+    }),
+});
+
 export function buildProgram(
   out: (s: string) => void = (s) => console.log(s),
-  io: Partial<Omit<CommandIo, "out">> = {},
+  io: PartialIo = {},
 ): Command {
-  const cio: CommandIo = {
-    out,
-    err: io.err ?? ((s) => console.error(s)),
-    setExitCode:
-      io.setExitCode ??
-      ((code) => {
-        process.exitCode = code;
-      }),
-  };
+  const cio = commandIo(out, io);
   const program = new Command()
     .name("mycel")
     .description("Build a data-driven topical map. A human approves everything.")
-    .version(CORE_VERSION)
+    .option("-V, --version", "show the version and the git commit of the code")
     .option("--runs-dir <dir>", "where runs are stored", "runs")
+    .option(...JSON_FLAG)
     // A wrong flag throws instead of exiting, so index.ts can give it exit code 2.
     .exitOverride()
     .configureOutput({
@@ -103,11 +137,23 @@ export function buildProgram(
       writeErr: (s) => cio.err(s.trimEnd()),
       outputError: (s, write) => write(s.replace(/^error: /, "error       ")),
     })
-    .showHelpAfterError(
-      "fix         mycel --help shows the commands, their order and the exit codes",
-    )
+    .showHelpAfterError(`fix         ${USAGE_FIX}`)
     .addHelpText("after", ROUTE);
+  // Looked up only when asked for (it starts git), and ends like commander's own --version.
+  program.on("option:version", () => {
+    out(versionLine());
+    throw new CommanderError(0, "commander.version", versionLine());
+  });
   const runsDir = () => program.opts<{ runsDir: string }>().runsDir;
+  /** The command that is running: its name as typed, and whether it was asked for JSON. */
+  let current = { name: "", json: false };
+  program.hook("preAction", (_program, action) => {
+    // --json works before the command too (`mycel --json status x`): the program takes it there.
+    current = {
+      name: commandPath(action),
+      json: !!action.optsWithGlobals<{ json?: boolean }>().json,
+    };
+  });
   /** Every command ends the same way: result, run summary, next step; or error, fix, code. */
   const run = (
     opts: { debug?: boolean | undefined; timeline?: "full" },
@@ -119,6 +165,7 @@ export function buildProgram(
         runsDir: runsDir(),
         ...(opts.timeline ? { timeline: opts.timeline } : {}),
         ...(opts.debug ? { debug: true } : {}),
+        ...(current.json ? { json: { command: current.name, version: cliVersion() } } : {}),
       },
       fn,
     );
@@ -195,9 +242,16 @@ export function buildProgram(
     .action((file: string, opts: { by?: string; debug?: boolean }) =>
       run(opts, async () => {
         const by = opts.by ?? process.env.USERNAME ?? process.env.USER ?? "unknown";
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        // With --json the questions go to stderr: stdout is the one JSON object at the end.
+        const rl = createInterface({
+          input: process.stdin,
+          output: current.json ? process.stderr : process.stdout,
+        });
         try {
-          await contextConfirm(file, by, { print: out, ask: (p) => rl.question(p) });
+          await contextConfirm(file, by, {
+            print: current.json ? cio.err : out,
+            ask: (p) => rl.question(p),
+          });
         } finally {
           rl.close();
         }
@@ -226,13 +280,17 @@ export function buildProgram(
       "--out <file>",
       "where to write it (default: business.proposed.json next to the context)",
     )
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel business propose clients/example.com/context.json --site https://example.com",
+      ),
     )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
-    .option("--debug", "mirror logs to the console")
     .action(
-      async (
+      (
         contextFile: string,
         opts: {
           site: string;
@@ -242,12 +300,10 @@ export function buildProgram(
           model: string;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof businessPropose>>;
-        try {
-          res = await businessPropose({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          businessPropose({
+            runsDir: runsDir(),
             contextFile,
             site: opts.site,
             provider: opts.provider,
@@ -255,17 +311,8 @@ export function buildProgram(
             ...(opts.research ? { researchFile: opts.research } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
   business
     .command("apply")
@@ -276,38 +323,37 @@ export function buildProgram(
     .requiredOption("--answers <file>", "the owner's answers (OwnerAnswers JSON)")
     .option("--by <name>", "who answered; must match the file's by")
     .option("--out <file>", "where to write it (default: business.json next to the proposal)")
-    .option("--debug", "mirror logs to the console")
-    .action((proposedFile: string, opts: { answers: string; by?: string; out?: string }) => {
-      try {
-        const res = businessApply({
-          proposedFile,
-          answersFile: opts.answers,
-          ...(opts.by ? { by: opts.by } : {}),
-          ...(opts.out ? { out: opts.out } : {}),
-        });
-        for (const l of res.lines) out(l);
-      } catch (err) {
-        out(`failed      ${(err as Error).message}`);
-        process.exitCode = 1;
-      }
-    });
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel business apply clients/example.com/business.proposed.json --answers clients/example.com/owner-answers.json",
+      ),
+    )
+    .action(
+      (
+        proposedFile: string,
+        opts: { answers: string; by?: string; out?: string; debug?: boolean },
+      ) =>
+        run(opts, () =>
+          businessApply({
+            proposedFile,
+            answersFile: opts.answers,
+            ...(opts.by ? { by: opts.by } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+          }),
+        ),
+    );
   business
     .command("score")
     .description("Score a profile against an answer key (a test client's business.key.json)")
     .argument("<profile>", "business.proposed.json or business.json")
     .requiredOption("--key <file>", "the answer key")
     .option("--language <code>", "market language", "nl")
-    .option("--debug", "mirror logs to the console")
-    .action((profileFile: string, opts: { key: string; language: string }) => {
-      try {
-        for (const l of businessScore({ profileFile, keyFile: opts.key, language: opts.language })
-          .lines)
-          out(l);
-      } catch (err) {
-        out(`failed      ${(err as Error).message}`);
-        process.exitCode = 1;
-      }
-    });
+    .option(...DEBUG)
+    .action((profileFile: string, opts: { key: string; language: string; debug?: boolean }) =>
+      run(opts, () => businessScore({ profileFile, keyFile: opts.key, language: opts.language })),
+    );
   business
     .command("simulate")
     .description("Play a test client's owner from its answer key: writes owner-answers.json")
@@ -319,26 +365,21 @@ export function buildProgram(
       "--out <file>",
       "where to write the answers (default: owner-answers.json next to the proposal)",
     )
-    .option("--debug", "mirror logs to the console")
+    .option(...DEBUG)
     .action(
       (
         proposedFile: string,
-        opts: { key: string; language: string; by?: string; out?: string },
-      ) => {
-        try {
-          const res = businessSimulate({
+        opts: { key: string; language: string; by?: string; out?: string; debug?: boolean },
+      ) =>
+        run(opts, () =>
+          businessSimulate({
             proposedFile,
             keyFile: opts.key,
             language: opts.language,
             ...(opts.by ? { by: opts.by } : {}),
             ...(opts.out ? { out: opts.out } : {}),
-          });
-          for (const l of res.lines) out(l);
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-        }
-      },
+          }),
+        ),
     );
 
   program
@@ -564,6 +605,24 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
     );
 
   program
+    .command("status")
+    .description(
+      "Where a client stands: which files are there, which are out of date, and the next command",
+    )
+    .argument("<folder>", "the client's folder, the one with its context.json")
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      `${examples("mycel status clients/example.com", "mycel status clients/example.com --json")}
+It reads the folder and the run records, and changes nothing. A file is out of date when it is
+older than a file it was made from, or when the step that made it has a newer version since.
+`,
+    )
+    .action((folder: string, opts: { debug?: boolean }) =>
+      run(opts, () => statusRun({ dir: folder, runsDir: runsDir() })),
+    );
+
+  program
     .command("logs")
     .description("Show a readable timeline of a run, or list recent runs")
     .argument("[run]", 'run id, unique prefix, or "latest"')
@@ -581,17 +640,34 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
       run(opts, () => {
         if (!runArg) {
           const runs = listRuns(runsDir()).slice(0, 15);
-          if (runs.length === 0) return { ok: true, lines: [`No runs in ${runsDir()}.`] };
+          if (runs.length === 0) {
+            return { ok: true, lines: [`No runs in ${runsDir()}.`], data: { runs: [] } };
+          }
           return {
             ok: true,
             lines: runs.map(
               (r) =>
                 `${r.runId}  ${runStatus(r).padEnd(11)}  ${r.client}  ${r.command}  ${usd(r.costUsd)}`,
             ),
+            data: {
+              runs: runs.map((r) => ({
+                runId: r.runId,
+                status: runStatus(r),
+                client: r.client,
+                command: r.command,
+                costUsd: r.costUsd,
+                startedAt: r.startedAt,
+              })),
+            },
           };
         }
         const runId = resolveRunId(runsDir(), runArg);
-        return { ok: true, lines: [formatTimeline(runsDir(), runId, { minLevel: opts.level })] };
+        return {
+          ok: true,
+          lines: [formatTimeline(runsDir(), runId, { minLevel: opts.level })],
+          // The run it shows, not a run of its own: `runId` stays empty for `logs`.
+          data: { run: summarizeRun(runsDir(), runId) },
+        };
       }),
     );
 
@@ -647,9 +723,16 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
     .option("--out <file>", "where to write the eval (default: map-eval.json next to the map)")
     .option("--review", "also write the two reviewer prompts (SEO expert, owner)")
     .option("--no-serps", "skip the SERP overlap check")
-    .option("--debug", "mirror logs to the console")
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel eval map clients/example.com/topical-map.json",
+        "mycel eval map clients/example.com/topical-map.json --review",
+      ),
+    )
     .action(
-      async (
+      (
         mapFile: string,
         opts: {
           context?: string;
@@ -659,12 +742,10 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
           serps: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof evalMapRun>>;
-        try {
-          res = await evalMapRun({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          evalMapRun({
+            runsDir: runsDir(),
             mapFile,
             serps: opts.serps,
             ...(opts.context ? { contextFile: opts.context } : {}),
@@ -672,17 +753,8 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.review ? { review: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
   const writing = evals
     .command("writing")
@@ -746,5 +818,48 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
       run({ ...opts, timeline: "full" }, () => llmPing({ runsDir: runsDir(), ...opts })),
     );
 
+  for (const cmd of leafCommands(program.commands)) cmd.option(...JSON_FLAG);
   return program;
+}
+
+/** The command a wrong call was aiming at, read from its words: "cluster" in `cluster --nope`. */
+function typedCommand(program: Command, argv: readonly string[]): string {
+  let at = program;
+  for (const word of argv.slice(2)) {
+    const sub = at.commands.find((c) => c.name() === word);
+    if (sub) at = sub;
+  }
+  return commandPath(at);
+}
+
+/**
+ * The whole CLI for one call: parse, run, set the exit code. commander has already printed its
+ * own message when it throws: help and --version end with 0, a wrong flag or argument is a
+ * usage error (exit code 2), with the JSON output too when --json was asked for. Anything else
+ * is a bug: let it show.
+ */
+export async function runCli(
+  argv: readonly string[],
+  out: (s: string) => void = (s) => console.log(s),
+  io: PartialIo = {},
+): Promise<void> {
+  const cio = commandIo(out, io);
+  const program = buildProgram(out, io);
+  try {
+    await program.parseAsync([...argv]);
+  } catch (err) {
+    if (!(err instanceof CommanderError)) throw err;
+    if (err.exitCode === 0) {
+      cio.setExitCode(0);
+      return;
+    }
+    if (argv.includes("--json")) {
+      const usage = new MycelError("USAGE", err.message.replace(/^error: /, ""), {
+        fix: USAGE_FIX,
+      });
+      const id = { command: typedCommand(program, argv), version: cliVersion() };
+      cio.out(JSON.stringify(jsonOutput(id, "", undefined, usage)));
+    }
+    cio.setExitCode(2);
+  }
 }

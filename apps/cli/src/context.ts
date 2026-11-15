@@ -27,7 +27,7 @@ import {
 } from "@mycel/core";
 import { ClientContext, Market, SitePages } from "@mycel/schema";
 import { dataforseoFromEnv, runBudget } from "./dataforseo.ts";
-import { command } from "./input.ts";
+import { command, readInput } from "./input.ts";
 import type { CommandResult } from "./run-command.ts";
 
 /**
@@ -308,9 +308,10 @@ export async function contextConfirm(
   io: ConfirmIo,
   now = () => new Date(),
 ): Promise<ClientContext> {
-  if (!existsSync(file))
-    throw new Error(`no context file at ${file}; run mycel context propose first`);
-  let ctx = ClientContext.parse(JSON.parse(readFileSync(file, "utf8")));
+  let ctx = readInput(file, ClientContext, {
+    name: "context",
+    writtenBy: "mycel context propose",
+  });
   const save = () => writeFileSync(file, `${JSON.stringify(ctx, null, 2)}\n`);
   if (ctx.confirmed) {
     // Going through a confirmed context again changes it answer by answer: keep the old one.
