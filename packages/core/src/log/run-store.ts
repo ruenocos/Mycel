@@ -45,6 +45,17 @@ export interface StepContext {
   ): string;
 }
 
+let progress: ((line: string) => void) | undefined;
+
+/**
+ * Where a run says which step it starts, while it is busy. The CLI points this at stderr so a long
+ * run isn't silent; off by default (tests, libraries). A run that mirrors its log to the console
+ * (--debug) already shows every step, so it stays quiet here.
+ */
+export function setRunProgress(sink: ((line: string) => void) | undefined): void {
+  progress = sink;
+}
+
 export function newRunId(now: Date = new Date()): string {
   const stamp = now.toISOString().slice(0, 19).replaceAll(":", "-");
   return `${stamp}Z-${randomBytes(2).toString("hex")}`;
@@ -77,6 +88,7 @@ export class RunStore {
   private readonly meta: RunMeta;
   private readonly secrets: string[];
   private readonly now: () => Date;
+  private readonly quiet: boolean;
   private seq = 0;
 
   private constructor(opts: CreateRunOptions) {
@@ -85,6 +97,7 @@ export class RunStore {
     this.dir = join(opts.runsDir, this.runId);
     mkdirSync(this.dir, { recursive: true });
     this.secrets = [...secretsFromEnv(), ...(opts.secrets ?? [])];
+    this.quiet = opts.consoleLevel !== undefined;
     const sinks: LogSink[] = [fileSink(join(this.dir, "log.jsonl"))];
     if (opts.consoleLevel) sinks.push(consoleSink(opts.consoleLevel));
     if (opts.sink) sinks.push(opts.sink);
@@ -132,6 +145,7 @@ export class RunStore {
     mkdirSync(dir, { recursive: true });
     const log = this.log.child(name);
     log.event("info", "step.start", `step ${name} started`);
+    if (!this.quiet) progress?.(`running     ${name}`);
     const started = this.now().getTime();
     try {
       const result = await fn(this.stepContext(name, dir, log, summary));

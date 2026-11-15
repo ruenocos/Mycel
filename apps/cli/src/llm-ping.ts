@@ -1,6 +1,7 @@
 import { FakeProvider, LlmClient, type LlmProvider, OllamaProvider } from "@mycel/connectors";
-import { CORE_VERSION, formatTimeline, RunStore } from "@mycel/core";
+import { CORE_VERSION, RunStore } from "@mycel/core";
 import { z } from "zod";
+import type { CommandResult } from "./run-command.ts";
 
 export interface PingOptions {
   runsDir: string;
@@ -20,7 +21,7 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
 }
 
 /** One logged LLM call inside a run, to check the provider, key and logging end to end. */
-export async function llmPing(opts: PingOptions): Promise<{ runId: string; timeline: string }> {
+export async function llmPing(opts: PingOptions): Promise<CommandResult & { runId: string }> {
   const env = opts.env ?? process.env;
   const run = RunStore.create({
     runsDir: opts.runsDir,
@@ -52,5 +53,10 @@ export async function llmPing(opts: PingOptions): Promise<{ runId: string; timel
     failure = err;
   }
   run.finish(failure);
-  return { runId: run.runId, timeline: formatTimeline(opts.runsDir, run.runId) };
+  return {
+    runId: run.runId,
+    ok: failure === undefined,
+    lines: [],
+    ...(failure !== undefined ? { failure } : {}),
+  };
 }
