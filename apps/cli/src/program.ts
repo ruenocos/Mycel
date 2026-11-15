@@ -323,6 +323,10 @@ export function buildProgram(
     .requiredOption("--answers <file>", "the owner's answers (OwnerAnswers JSON)")
     .option("--by <name>", "who answered; must match the file's by")
     .option("--out <file>", "where to write it (default: business.json next to the proposal)")
+    .option(
+      "--force",
+      "replace a business.json the owner already confirmed (a backup is kept next to it)",
+    )
     .option(...DEBUG)
     .addHelpText(
       "after",
@@ -333,7 +337,7 @@ export function buildProgram(
     .action(
       (
         proposedFile: string,
-        opts: { answers: string; by?: string; out?: string; debug?: boolean },
+        opts: { answers: string; by?: string; out?: string; force?: boolean; debug?: boolean },
       ) =>
         run(opts, () =>
           businessApply({
@@ -341,6 +345,7 @@ export function buildProgram(
             answersFile: opts.answers,
             ...(opts.by ? { by: opts.by } : {}),
             ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.force ? { force: true } : {}),
           }),
         ),
     );
@@ -712,7 +717,7 @@ older than a file it was made from, or when the step that made it has a newer ve
   evals
     .command("map")
     .description(
-      "Score a topical map on the round-8 numbers (issue #42): duplicate intents, offer fit, first plan, existing pages. Cache only, no paid calls",
+      "Score a topical map on the round-8 numbers (issue #42): duplicate intents, offer fit, first plan, existing pages. Cache only, no paid calls. Fails (exit 10) when a number misses its target",
     )
     .argument("<map>", "topical-map.json written by mycel map")
     .option("--context <file>", "the client's context (default: context.json next to the map)")

@@ -28,6 +28,7 @@ import {
 } from "@mycel/schema";
 import { z } from "zod";
 import { CONTEXT_FILE } from "./cluster.ts";
+import { backupFile } from "./context.ts";
 import { RESEARCH_FILE } from "./filter.ts";
 import { command, readInput } from "./input.ts";
 import { PAGES_FILE } from "./research.ts";
@@ -218,14 +219,36 @@ export interface BusinessFileResult extends CommandResult {
 }
 
 /**
+ * A confirmed profile is the owner's own answers (ADR 0014): a user decision, which survives
+ * re-runs. Refuse to replace it unless forced.
+ */
+export function assertProfileReplaceable(file: string, force = false): void {
+  if (force || !existsSync(file)) return;
+  let why: string;
+  try {
+    const current = readProfile(file);
+    if (!current.confirmed) return;
+    why = `was confirmed by ${current.confirmed.by} on ${current.confirmed.at.slice(0, 10)}`;
+  } catch {
+    // Not a profile this version can read. Whatever it is, it is someone's file: keep it.
+    why = "isn't a business profile this version can read";
+  }
+  throw new MycelError("WOULD_REPLACE", `${file} ${why}; applying answers would replace it`, {
+    fix: "use --out for another file, or --force to replace it (the current file is kept as a backup)",
+  });
+}
+
+/**
  * Applies the owner's answers (a file) to a proposal and writes the confirmed business.json.
- * `by` names who answered; the file's own `by` must match when both are given.
+ * `by` names who answered; the file's own `by` must match when both are given. A profile that
+ * is already confirmed is replaced only with `force`, and then a backup is kept next to it.
  */
 export function businessApply(opts: {
   proposedFile: string;
   answersFile: string;
   by?: string;
   out?: string;
+  force?: boolean;
 }): BusinessFileResult {
   const proposed = readProfile(opts.proposedFile);
   const answers = readInput(opts.answersFile, OwnerAnswers, ANSWERS);
@@ -238,6 +261,8 @@ export function businessApply(opts: {
   }
   const profile = applyOwnerAnswers(proposed, answers);
   const out = opts.out ?? join(dirname(opts.proposedFile), "business.json");
+  assertProfileReplaceable(out, opts.force);
+  const backup = backupFile(out);
   writeJson(out, profile);
   return {
     ok: true,
@@ -245,6 +270,7 @@ export function businessApply(opts: {
     lines: [
       `confirmed   by ${answers.by} at ${answers.at} (answers from ${opts.answersFile})`,
       ...profileLines(profile),
+      ...(backup ? [`backup      ${backup} (the profile that was there)`] : []),
     ],
     outputs: { profile: out },
     next: [{ note: "later steps read business.json when it sits next to context.json" }],

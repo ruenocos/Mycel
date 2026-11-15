@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliOutput } from "@mycel/schema";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { mapRun } from "./map.ts";
 import { buildProgram, leafCommands, runCli } from "./program.ts";
 
 /**
@@ -66,7 +67,12 @@ const cluster = (id: string, main: string, volume: number) => ({
   outlierReasons: [],
 });
 
-beforeAll(() => {
+const STATS = [
+  ...["queries", "clustered", "clusters", "pages", "sections", "micro", "singletons"],
+  ...["outliers", "ambiguousMembers", "borderlineMembers"],
+];
+
+beforeAll(async () => {
   // The same everywhere: no key from the machine the tests happen to run on.
   for (const key of ["DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "GSC_PROPERTY"]) {
     vi.stubEnv(key, "");
@@ -112,19 +118,32 @@ beforeAll(() => {
       clusters,
       unclustered: [],
       stats: {
-        queries: 3,
-        clustered: 3,
-        clusters: 3,
-        pages: 3,
-        sections: 0,
-        micro: 0,
-        singletons: 3,
-        outliers: 0,
-        ambiguousMembers: 0,
-        borderlineMembers: 0,
+        ...Object.fromEntries(STATS.map((k) => [k, 0])),
+        ...{ queries: 3, clustered: 3, clusters: 3, pages: 3, singletons: 3 },
       },
     }),
   );
+  // A map with only its root: nothing in it can miss an eval target.
+  mkdirSync(at("empty"));
+  writeFileSync(at("empty", "context.json"), JSON.stringify(context));
+  writeFileSync(
+    at("empty", "clusters.json"),
+    JSON.stringify({
+      site: context.site,
+      market: context.market,
+      minSharedUrls: 3,
+      clusters: [],
+      unclustered: [],
+      stats: Object.fromEntries(STATS.map((k) => [k, 0])),
+    }),
+  );
+  const empty = await mapRun({
+    runsDir: at("setup-runs"),
+    clustersFile: at("empty", "clusters.json"),
+    provider: "fake",
+    model: "fake",
+  });
+  expect(empty.ok).toBe(true);
 });
 afterAll(() => vi.unstubAllEnvs());
 
@@ -230,10 +249,11 @@ const CASES: Case[] = [
   },
   {
     name: "eval map",
-    ok: () => [at("topical-map.json"), "--no-serps", "--review"],
-    fail: () => [NOPE],
-    code: "INPUT_MISSING",
-    exitCode: 3,
+    ok: () => [at("empty", "topical-map.json"), "--no-serps", "--review"],
+    // The eval runs and writes its file; the map misses targets, so it is not a pass.
+    fail: () => [at("topical-map.json"), "--no-serps"],
+    code: "BELOW_PASS_MARK",
+    exitCode: 10,
   },
   {
     name: "eval writing run",
@@ -320,6 +340,22 @@ describe("mycel --json", () => {
         cmd.name(),
       ).toContain("--json");
     }
+  });
+
+  it("an eval below its targets fails with exit 10 and still says where its file is", async () => {
+    const { output } = await json("eval", "map", at("topical-map.json"), "--no-serps");
+    expect(output).toMatchObject({
+      status: "failed",
+      exitCode: 10,
+      outputs: { eval: at("map-eval.json") },
+      steps: [{ name: "map-eval", status: "ok" }],
+      error: { code: "BELOW_PASS_MARK", transient: false },
+    });
+    const missed = (output.data as { missed: string[] }).missed;
+    expect(missed.length).toBeGreaterThan(0);
+    expect(output.error?.message).toBe(
+      `the map misses ${missed.length} of 7 targets: ${missed.join(", ")}`,
+    );
   });
 
   it("carries pointers and numbers, not the dataset", async () => {

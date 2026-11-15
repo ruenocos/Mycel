@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   CORE_VERSION,
+  MycelError,
   mapEvalStep,
   mapReviewPrompt,
   type PageRef,
@@ -37,6 +38,11 @@ function missesTarget(id: MapMetricId, value: number | null): boolean {
   if (value === null) return false;
   return (t.max !== undefined && value > t.max) || (t.min !== undefined && value < t.min);
 }
+
+/** How many numbers have a target at all. */
+const TARGETS = MAP_METRICS.filter(
+  (id) => MAP_TARGETS[id].max !== undefined || MAP_TARGETS[id].min !== undefined,
+).length;
 
 const fmt = (v: number | null, share: boolean) =>
   v === null ? "n/a" : share ? `${Math.round(v * 100)}%` : String(v);
@@ -128,6 +134,7 @@ export async function evalMapRun(opts: EvalMapOptions): Promise<EvalMapResult> {
   if (!port) lines.push("note        no DataforSEO login: the overlap number is empty");
   let out: string | undefined;
   let data: Record<string, unknown> | undefined;
+  let missed: MapMetricId[] = [];
   const outputs: Record<string, string> = {};
   let failure: unknown;
   try {
@@ -142,10 +149,11 @@ export async function evalMapRun(opts: EvalMapOptions): Promise<EvalMapResult> {
     writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
     lines.push(...evalLines(result));
     outputs.eval = out;
+    missed = MAP_METRICS.filter((id) => missesTarget(id, result.metrics[id].value));
     data = {
       withProfile: result.withProfile,
       metrics: Object.fromEntries(MAP_METRICS.map((id) => [id, result.metrics[id].value])),
-      missed: MAP_METRICS.filter((id) => missesTarget(id, result.metrics[id].value)),
+      missed,
     };
     if (opts.review) {
       for (const persona of Object.keys(REVIEW_PERSONAS) as ReviewPersona[]) {
@@ -158,9 +166,17 @@ export async function evalMapRun(opts: EvalMapOptions): Promise<EvalMapResult> {
     failure = err;
   }
   const meta = run.finish(failure);
+  // The run can be fine while the map misses a target: that is a missed mark, not a crash.
+  if (failure === undefined && missed.length) {
+    failure = new MycelError(
+      "BELOW_PASS_MARK",
+      `the map misses ${missed.length} of ${TARGETS} targets: ${missed.join(", ")}`,
+      { fix: "the MISS lines above say which; the eval file is written so it can be inspected" },
+    );
+  }
   return {
     runId: run.runId,
-    ok: meta.status === "ok",
+    ok: meta.status === "ok" && missed.length === 0,
     lines,
     ...(out ? { out, outputs } : {}),
     ...(data ? { data } : {}),

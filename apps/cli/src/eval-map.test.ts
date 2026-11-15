@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SerpBatchPort } from "@mycel/core";
+import { type SerpBatchPort, summarizeRun } from "@mycel/core";
 import { MapEval } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
 import { describeError } from "./errors.ts";
@@ -102,7 +102,13 @@ describe("mycel eval map", () => {
       review: true,
       port,
     });
-    expect(res.ok).toBe(true);
+    // The eval itself ran; the map misses a target (two pages share a results page), and that
+    // is a missed mark: exit code 10, so the eval can gate a change.
+    expect(res.ok).toBe(false);
+    expect(describeError(res.failure)).toMatchObject({ code: "BELOW_PASS_MARK" });
+    expect(describeError(res.failure).message).toMatch(/^the map misses \d of 7 targets: /);
+    expect(describeError(res.failure).message).toContain("duplicateIntentPairs");
+    expect(summarizeRun(join(dir, "runs"), res.runId).status).toBe("ok");
     const e = MapEval.parse(JSON.parse(readFileSync(res.out as string, "utf8")));
     expect(e.metrics.duplicateIntentPairs.value).toBe(1);
     expect(e.metrics.existingWithJob.of).toBeGreaterThan(0);

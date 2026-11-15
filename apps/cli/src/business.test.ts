@@ -121,6 +121,31 @@ describe("mycel business", () => {
     expect(apply.exitCode).toBe(0);
     expect(apply.text).toContain(`wrote       ${join(dir, "business.json")}  (profile)`);
 
+    // The owner's confirmed answers are a decision: a second apply does not replace them.
+    const confirmed = readFileSync(join(dir, "business.json"), "utf8");
+    const again = await mycel("business", "apply", proposed, "--answers", answers);
+    expect(again.exitCode).toBe(5);
+    expect(again.out).toEqual([]);
+    expect(again.errors).toContain(
+      "business.json was confirmed by simulated owner (answer key) on ",
+    );
+    expect(again.errors).toContain("fix         use --out for another file, or --force");
+    expect(again.errors).toContain("code        WOULD_REPLACE");
+    expect(readFileSync(join(dir, "business.json"), "utf8")).toBe(confirmed);
+
+    // Asked for explicitly it does, and what was there is kept next to it.
+    const forced = await mycel("business", "apply", proposed, "--answers", answers, "--force");
+    expect(forced.exitCode).toBe(0);
+    const backup = /backup {6}(\S+) /.exec(forced.text)?.[1] ?? "";
+    expect(backup).toMatch(/business\.backup-.*\.json$/);
+    expect(readFileSync(backup, "utf8")).toBe(confirmed);
+
+    // Another file is always fine.
+    const elsewhere = await mycel(
+      ...["business", "apply", proposed, "--answers", answers, "--out", join(dir, "b2.json")],
+    );
+    expect(elsewhere.exitCode).toBe(0);
+
     const missing = await mycel("business", "score", join(dir, "nope.json"), "--key", key);
     expect(missing.exitCode).toBe(3);
     expect(missing.errors).toContain(
