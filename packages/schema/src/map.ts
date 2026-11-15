@@ -101,6 +101,13 @@ export const MapNode = z.object({
   action: z.enum(["keep", "improve", "resolve", "create"]),
   /** In the first plan, or later. Absent for pages to keep as they are. */
   wave: z.enum(["now", "later"]).optional(),
+  /** Place in the first plan, 1 = first (issue #42, step 6); only on "now" pages. */
+  planStep: z.number().int().positive().optional(),
+  /**
+   * What the page is worth to the business: offering tier x buying stage x click price x
+   * opportunity (value.ts). Orders the plan; volume only breaks ties.
+   */
+  value: z.number().nonnegative().optional(),
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
   /**
    * The site section the page lives in (issue #51): its page type, template and URL folder.
@@ -141,7 +148,14 @@ export type MapHeader = z.infer<typeof MapHeader>;
 export const LeftOut = z.object({
   mainQuery: z.string().min(1),
   volume: z.number().int().nonnegative().default(0),
-  reason: z.enum(["other_business", "place_not_served", "off_offer"]),
+  /**
+   * over_budget: it fits the business, but it isn't in this year's work (issue #42, step 6); the
+   * owner can pull it back from this backlog.
+   */
+  reason: z.enum(["other_business", "place_not_served", "off_offer", "over_budget"]),
+  /** For a backlog page: the offering it would serve and its value score. */
+  offeringId: z.string().min(1).optional(),
+  value: z.number().nonnegative().optional(),
 });
 export type LeftOut = z.infer<typeof LeftOut>;
 
@@ -213,6 +227,24 @@ export const SiteMaps = z.object({
   maps: z.array(TopicalMap).min(1),
   /** The site's sections with their roles, suggested ones included (issue #51). */
   siteSections: z.array(SiteSection.extend({ suggested: z.boolean().optional() })).optional(),
+  /**
+   * Every existing page with its job in the map (issue #42, step 5). serves: it is the page for a
+   * map node. competes: it fights another page for one node (see that node's conflict). supports:
+   * it sits under a node without being its page (a product in its category, an article under its
+   * topic). outside: no job, with the reason.
+   */
+  inventory: z
+    .array(
+      z.object({
+        url: z.string().min(1),
+        kind: z.string().min(1),
+        title: z.string(),
+        job: z.enum(["serves", "competes", "supports", "outside"]),
+        nodeId: z.string().min(1).optional(),
+        reason: z.string().min(1).optional(),
+      }),
+    )
+    .optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z
     .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))

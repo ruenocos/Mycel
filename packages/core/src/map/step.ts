@@ -13,6 +13,7 @@ import type { JsonModel } from "../context/llm.ts";
 import type { StepContext } from "../log/run-store.ts";
 import { defineStep } from "../step.ts";
 import { attachToBusiness, lockOfferingHubs } from "./attach.ts";
+import { checkLabels } from "./check.ts";
 import { judgeConflicts } from "./conflict.ts";
 import { finishMaps } from "./finish.ts";
 import { groupPages } from "./group.ts";
@@ -32,6 +33,11 @@ import { anchorSiteHubs } from "./site.ts";
  * 5. group.ts: crowded hubs and loose top-level pages are grouped by theme.
  * 6. finish.ts: tiny pages fold into sections, actions and the first plan, URLs, link plan.
  * 7. conflict.ts: the model judges each conflict: merge or differentiate.
+ *
+ * Between 4 and 5, check.ts fact-checks the model's names and why-texts (one fix by the model,
+ * else a plain sentence from data). In 6, every existing page gets a job (inventory.ts), pages
+ * get a value (value.ts), a year of work is kept (budget.ts) and ordered into a first plan of
+ * about 10 steps (first-plan.ts).
  *
  * With a confirmed business profile (issue #42), between 1 and 2:
  * - attach.ts: pages attach to the offerings (hard gate for what the business doesn't do), every
@@ -70,8 +76,15 @@ import { anchorSiteHubs } from "./site.ts";
  * 10: site sections (issue #51): every page gets the site section it lives in (WordPress post
  *    type, menu group or URL folder, with a role), new pages' URLs use that section's folder, and
  *    the map lists the site's sections, suggested ones included.
+ * 11: existing pages first, value and a first plan (issue #42, steps 5-7): every existing page
+ *    gets a job (serves, competes, supports, outside), a page whose words fully match a new page
+ *    serves it, pages compete by their words too (not only by the model's links), a value per
+ *    page (offering tier x buying stage x click price x opportunity), a page budget of a year of
+ *    work (the rest to the backlog), a first plan of about 10 steps tied to the top offerings
+ *    or a conflict, a fact check on names and why-texts (map-fix v1) with plain market-language
+ *    sentences as the fallback, and slugs from the page name.
  */
-export const MAP_STEP_VERSION = "10";
+export const MAP_STEP_VERSION = "11";
 
 export const MapInput = z.object({
   context: ClientContext,
@@ -223,6 +236,15 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
       }
       const dropped = [...labels.values()].filter((l) => l.drop).length;
       if (dropped) ctx.log.info("pages judged outside the business", { count: dropped });
+      // Names and why-texts claim only what the profile holds (fact check, one fix by the model).
+      await checkLabels(
+        llm,
+        input.context,
+        plan.entities.flatMap((e) => e.nodes),
+        labels,
+        { model: input.model },
+        meter.rec,
+      );
       const groups = await groupPages(llm, plan, labels, opts, meter.rec);
       const maps = finishMaps({
         plan,

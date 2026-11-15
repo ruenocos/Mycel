@@ -42,6 +42,12 @@ interface WpType {
   rest_namespace?: string;
 }
 
+/**
+ * The category taxonomy per post type: posts use "categories", WooCommerce products
+ * "product_cat". A product's category says which shop category page it supports (issue #42).
+ */
+const CATEGORY_TAXONOMY: Record<string, string> = { post: "categories", product: "product_cat" };
+
 interface WpItem {
   id: number;
   type: string;
@@ -51,6 +57,8 @@ interface WpItem {
   content?: { rendered?: string };
   excerpt?: { rendered?: string };
   categories?: number[];
+  /** WooCommerce product categories. */
+  product_cat?: number[];
   yoast_head_json?: {
     title?: string;
     description?: string;
@@ -193,17 +201,23 @@ export class WordPressClient {
 
   /**
    * All indexable content of the site as SitePages. Noindex pages are skipped. Every page keeps
-   * its post type as its section (issue #51), posts their first category, and the home page's
+   * its post type as its section (issue #51), posts and products their first category, and the home page's
    * menu groups come along for sections that have no folder.
    */
   async readSite(rec: CallRecorder): Promise<SitePages> {
     const types = await this.contentTypes(rec);
-    let categories = new Map<number, string>();
-    if (types.some((t) => t.slug === "post")) {
+    const categoriesOf = new Map<string, Map<number, string>>();
+    for (const t of types) {
+      const tax = CATEGORY_TAXONOMY[t.slug];
+      if (!tax) continue;
       try {
-        categories = await this.categories(rec);
+        categoriesOf.set(t.slug, await this.categories(tax, rec));
       } catch (err) {
-        rec.log.warn("wordpress: post categories not read", { error: (err as Error).message });
+        rec.log.warn("wordpress: categories not read", {
+          type: t.slug,
+          taxonomy: tax,
+          error: (err as Error).message,
+        });
       }
     }
     const pages: SitePage[] = [];
@@ -216,7 +230,9 @@ export class WordPressClient {
         const page = this.toPage(item);
         if (!page || seen.has(page.url)) continue;
         seen.add(page.url);
-        const category = categories.get(item.categories?.[0] ?? -1);
+        const tax = CATEGORY_TAXONOMY[t.slug];
+        const ids = tax === "product_cat" ? item.product_cat : item.categories;
+        const category = categoriesOf.get(t.slug)?.get(ids?.[0] ?? -1);
         own.push({ ...page, section: sectionKey(t.slug), ...(category ? { category } : {}) });
       }
       if (!own.length) continue;
@@ -256,11 +272,11 @@ export class WordPressClient {
     return { site: this.base, source: "wordpress", pages, sections, menu };
   }
 
-  /** Post categories by id, in the site's words. */
-  private async categories(rec: CallRecorder): Promise<Map<number, string>> {
+  /** Category terms by id, in the site's words (post categories or WooCommerce product_cat). */
+  private async categories(taxonomy: string, rec: CallRecorder): Promise<Map<number, string>> {
     const out = new Map<number, string>();
     for (let page = 1; page <= 10; page++) {
-      const url = `${this.base}/wp-json/wp/v2/categories?per_page=100&page=${page}&_fields=id,name`;
+      const url = `${this.base}/wp-json/wp/v2/${taxonomy}?per_page=100&page=${page}&_fields=id,name`;
       const { body, totalPages } = await this.get(url, rec, "json");
       if (!Array.isArray(body)) break;
       for (const c of body as { id: number; name?: string }[])
@@ -283,7 +299,7 @@ export class WordPressClient {
   }
 
   private async items(type: WpType, rec: CallRecorder): Promise<WpItem[]> {
-    const fields = "id,type,slug,link,title,content,excerpt,categories,yoast_head_json";
+    const fields = "id,type,slug,link,title,content,excerpt,categories,product_cat,yoast_head_json";
     const out: WpItem[] = [];
     const max = this.opts.maxPerType ?? 500;
     for (let page = 1; out.length < max; page++) {

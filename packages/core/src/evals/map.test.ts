@@ -277,4 +277,35 @@ describe("evalMap: site sections (issue #51)", () => {
     // A map made before site sections isn't scored on them.
     expect(run(maps([node("x")])).metrics.pagesWithoutSection.value).toBeNull();
   });
+
+  it("counts failed fact checks, slug words nobody searched, and page jobs from the inventory", () => {
+    const m = maps([
+      node("dry-needling", { why: "De beste dry needling, een echte kernpagina." }),
+      node("rugpijn-oefeningen", {
+        name: "Oefeningen bij rugpijn",
+        proposedUrl: "/blog/rugpijn-oefeningen-thuis/",
+      }),
+    ]);
+    m.inventory = [
+      {
+        url: "/dry-needling/",
+        kind: "service",
+        title: "Dry needling",
+        job: "serves",
+        nodeId: "dry-needling",
+      },
+      {
+        url: "/blog/rugpijn/",
+        kind: "blog",
+        title: "Rugpijn",
+        job: "supports",
+        nodeId: "rugpijn-oefeningen",
+      },
+    ];
+    const e = run(m);
+    expect(e.metrics.claimFailures.value).toBe(1);
+    expect(e.metrics.claimFailures.examples[0]).toContain("unproven praise");
+    expect(e.metrics.slugsOffText.examples).toEqual(["/blog/rugpijn-oefeningen-thuis/"]);
+    expect(e.metrics.existingWithJob.value).toBe(1);
+  });
 });

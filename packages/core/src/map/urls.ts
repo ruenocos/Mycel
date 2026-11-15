@@ -45,6 +45,11 @@ export interface UrlNode {
   section: "core" | "outer";
   informational: boolean;
   mainQuery: string;
+  /**
+   * The words the slug is made of when not the main search: the page's market-language name,
+   * set only when every word of it was searched (slugText in finish.ts).
+   */
+  slugText?: string;
   /** The existing page that serves this node, if any. */
   existing?: string;
   /** The folder of the node's site section ("/kennisbank/", "/" for root-level sections). */
@@ -94,7 +99,7 @@ export function proposeUrls(input: {
       urlOf.set(n.id, "/");
       continue;
     }
-    const slug = slugify(n.mainQuery);
+    const slug = slugify(n.slugText ?? n.mainQuery);
     const p = parent.get(n.id);
     // Siblings of the same kind (articles next to articles, offers next to offers).
     const siblings = (children.get(p ?? "") ?? []).filter(

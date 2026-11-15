@@ -17,6 +17,19 @@ const root = join(import.meta.dirname, "../../..");
 const fixture = join(root, "fixtures/clients/plantpost");
 const dir = mkdtempSync(join(tmpdir(), "mycel-cli-json-"));
 const at = (...parts: string[]) => join(dir, ...parts);
+/**
+ * The map the map test wrote, with one why-text praising without proof: it misses the fact-check
+ * target, so the eval runs, writes its file and is still not a pass.
+ */
+const belowMap = () => {
+  mkdirSync(at("below"), { recursive: true });
+  writeFileSync(at("below", "context.json"), readFileSync(at("context.json")));
+  const m = JSON.parse(readFileSync(at("topical-map.json"), "utf8"));
+  const n = m.maps[0].nodes.find((x: { level: string }) => x.level !== "root");
+  n.why = "De beste pagina van Nederland, gegarandeerd.";
+  writeFileSync(at("below", "topical-map.json"), JSON.stringify(m));
+  return at("below", "topical-map.json");
+};
 const NOPE = at("nope", "missing.json");
 
 /** Runs `mycel <args> --json` in-process and returns what a caller would get. */
@@ -251,7 +264,7 @@ const CASES: Case[] = [
     name: "eval map",
     ok: () => [at("empty", "topical-map.json"), "--no-serps", "--review"],
     // The eval runs and writes its file; the map misses targets, so it is not a pass.
-    fail: () => [at("topical-map.json"), "--no-serps"],
+    fail: () => [belowMap(), "--no-serps"],
     code: "BELOW_PASS_MARK",
     exitCode: 10,
   },
@@ -343,11 +356,11 @@ describe("mycel --json", () => {
   });
 
   it("an eval below its targets fails with exit 10 and still says where its file is", async () => {
-    const { output } = await json("eval", "map", at("topical-map.json"), "--no-serps");
+    const { output } = await json("eval", "map", belowMap(), "--no-serps");
     expect(output).toMatchObject({
       status: "failed",
       exitCode: 10,
-      outputs: { eval: at("map-eval.json") },
+      outputs: { eval: at("below", "map-eval.json") },
       steps: [{ name: "map-eval", status: "ok" }],
       error: { code: "BELOW_PASS_MARK", transient: false },
     });

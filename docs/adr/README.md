@@ -20,3 +20,4 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0014 | Business profile first: AI fills in with proof, the owner confirms        |
 | 0015 | CLI output contract: one runner, `--json`, exit codes, next step          |
 | 0016 | Site sections: a page has a topic and a page type                         |
+| 0017 | Page budget and first plan: a year of work, existing pages first          |

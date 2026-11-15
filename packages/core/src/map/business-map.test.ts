@@ -300,4 +300,77 @@ describe("mapStep with a business profile", () => {
       "fietsreparatie",
     );
   });
+
+  it("plans existing pages first, ties the first plan to the top offering and fact-checks the texts", async () => {
+    const run = RunStore.create({
+      runsDir: mkdtempSync(join(tmpdir(), "mycel-bmap-")),
+      client: "test",
+      command: "test",
+      cliVersion: "0.0.0",
+    });
+    const base = stub();
+    const fixes: string[] = [];
+    const llm = {
+      async generateJson(
+        req: { messages: { content: string }[] },
+        schema: { parse: (v: unknown) => unknown },
+      ) {
+        const user = req.messages[1]?.content ?? "";
+        if (user.includes("\nTexts:\n")) {
+          const items = JSON.parse(user.split("\nTexts:\n")[1] ?? "[]") as { i: number }[];
+          fixes.push(user);
+          return schema.parse({
+            results: items.map((it) => ({
+              i: it.i,
+              text: it.i === 0 ? "Wat een reparatie kost, voor wie twijfelt." : "De goedkoopste!",
+            })),
+          });
+        }
+        const out = (await (base.generateJson as (r: unknown, s: unknown) => Promise<unknown>)(
+          req,
+          schema,
+        )) as {
+          results?: { why?: string; name?: string; attribute?: string }[];
+        };
+        for (const r of out.results ?? []) {
+          if (r.attribute === "fietsreparatie kosten")
+            r.why = "De beste prijs van Zwolle, gegarandeerd.";
+          if (r.attribute === "fietsketting smeren") r.name = "Ketting smeren in Deventer";
+        }
+        return out;
+      },
+    } as unknown as JsonModel;
+    const maps = await runStep(run, mapStep(llm), {
+      context: { ...context, business },
+      clusters,
+      pages,
+      model: "fake",
+    });
+    const map = maps.maps[0] as (typeof maps.maps)[number];
+    expect(TopicalMap.safeParse(map).success).toBe(true);
+    // Fact check: one fix round; a fixed text is used, a fix that still fails gives way to data.
+    expect(fixes).toHaveLength(1);
+    expect(map.nodes.find((n) => n.mainQuery === "fietsreparatie kosten")?.why).toBe(
+      "Wat een reparatie kost, voor wie twijfelt.",
+    );
+    expect(map.nodes.find((n) => n.mainQuery === "fietsketting smeren")?.name).toBe(
+      "Fietsketting smeren",
+    );
+    // The first plan: numbered steps, each tied to the top offering (repairs) or a conflict.
+    const now = map.nodes
+      .filter((n) => n.wave === "now")
+      .sort((a, b) => (a.planStep ?? 0) - (b.planStep ?? 0));
+    expect(now.length).toBeGreaterThan(0);
+    expect(now.map((n) => n.planStep)).toEqual(now.map((_, i) => i + 1));
+    expect(now.every((n) => n.offeringId === "fietsreparatie" || n.action === "resolve")).toBe(
+      true,
+    );
+    expect(map.nodes.filter((n) => n.level !== "root").every((n) => n.value !== undefined)).toBe(
+      true,
+    );
+    // Every existing page has a job.
+    expect(maps.inventory).toEqual([
+      expect.objectContaining({ url: "/verhuur/", job: "serves", nodeId: "o-fietsverhuur" }),
+    ]);
+  });
 });

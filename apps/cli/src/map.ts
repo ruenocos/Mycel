@@ -127,11 +127,23 @@ export function summarizeMaps(d: SiteMaps): string[] {
         .map((x) => x.mainQuery)
         .join(", ")}`,
     );
+    const backlog = m.leftOut.filter((x) => x.reason === "over_budget").length;
+    lines.push(
+      `budget      ${count((x) => x.action === "create")} new pages, ${count((x) => x.action === "improve" || x.action === "resolve")} to fix; ${backlog} ideas in the backlog`,
+    );
     const first = n
-      .filter((x) => x.priority === 1 && x.level !== "root")
-      .slice(0, 8)
-      .map((x) => `${x.mainQuery} (${x.section})`);
-    if (first.length) lines.push(`do first    ${first.join(", ")}`);
+      .filter((x) => x.wave === "now")
+      .sort((a, b) => (a.planStep ?? 0) - (b.planStep ?? 0))
+      .slice(0, 10)
+      .map((x) => `${x.planStep}. ${x.action} ${x.name ?? x.mainQuery}`);
+    if (first.length) lines.push(`first plan  ${first.join(", ")}`);
+  }
+  if (d.inventory?.length) {
+    const jobs = new Map<string, number>();
+    for (const e of d.inventory) jobs.set(e.job, (jobs.get(e.job) ?? 0) + 1);
+    lines.push(
+      `page jobs   ${[...jobs].map(([k, v]) => `${k} ${v}`).join(", ")} (of ${d.inventory.length} existing pages)`,
+    );
   }
   return lines;
 }
