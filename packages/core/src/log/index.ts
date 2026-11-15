@@ -17,6 +17,7 @@ export {
 export { REDACTED, redact, secretsFromEnv } from "./redact.ts";
 export {
   type CreateRunOptions,
+  interruptActiveRuns,
   newRunId,
   RunStore,
   type StepContext,
@@ -31,6 +32,7 @@ export {
   readRunLog,
   readRunMeta,
   resolveRunId,
+  runStatus,
   summarizeRun,
   type TimelineOptions,
 } from "./timeline.ts";

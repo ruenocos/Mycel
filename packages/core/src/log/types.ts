@@ -66,7 +66,8 @@ export interface ApiCallRecord {
   startedAt: string;
 }
 
-export type StepStatus = "running" | "ok" | "failed";
+/** "interrupted": the run was stopped (Ctrl+C, a kill signal) while this step was busy. */
+export type StepStatus = "running" | "ok" | "failed" | "interrupted";
 
 export interface StepSummary {
   name: string;
@@ -89,8 +90,18 @@ export interface RunMeta {
   cliVersion: string;
   startedAt: string;
   endedAt?: string;
-  status: "running" | "ok" | "failed";
+  /**
+   * "interrupted": stopped by a signal, and the run could still write that down. A run whose
+   * process died without a word (power off, a forced kill) stays "running" on disk; readers
+   * use `runStatus()` to show it as "stopped".
+   */
+  status: "running" | "ok" | "failed" | "interrupted";
+  /** The process that runs (or ran) it, so a reader can tell a live run from a dead one. */
+  pid?: number;
   costUsd: number;
   steps: StepSummary[];
   error?: SerializedError;
 }
+
+/** What a reader shows: the status on disk, or "stopped" for a run whose process is gone. */
+export type RunStatus = RunMeta["status"] | "stopped";

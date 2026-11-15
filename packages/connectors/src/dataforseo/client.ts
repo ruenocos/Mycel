@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { Market } from "@mycel/schema";
+import { withUserAgent } from "../http.ts";
 import type { CallRecorder } from "../recorder.ts";
 import { type CacheEntry, FileCache, requestHash } from "./cache.ts";
 import { SpendLedger } from "./ledger.ts";
@@ -15,7 +16,8 @@ import {
   type RankedKeyword,
   type SerpResult,
 } from "./parse.ts";
-import { type PendingTask, PendingTasks } from "./pending.ts";
+import { PENDING_MAX_AGE_MS, type PendingTask, PendingTasks } from "./pending.ts";
+import { SERP_TASK_ENDPOINT, serpTaskPayload } from "./plan.ts";
 
 export class DataforseoError extends Error {
   override name = "DataforseoError";
@@ -85,8 +87,6 @@ export interface SerpBatchResult {
 
 const SERVICE = "dataforseo";
 const TASK_PENDING = new Set([20100, 40601, 40602]); // created, handed, in queue
-/** DataforSEO keeps standard-queue results for 30 days; older saved task ids are posted again. */
-const PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** A task whose task_get keeps failing is left for the next run after this many tries. */
 const COLLECT_MAX_ERRORS = 3;
 const KEPT = "the task id is saved, so the next run collects it without paying again";
@@ -133,7 +133,7 @@ export class DataforseoClient {
     );
     // Load (and, the first time in a month, seed) the ledger before this run adds to it.
     this.ledger.spentThisMonth();
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = withUserAgent(opts.fetchImpl ?? fetch);
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.baseUrl = opts.baseUrl ?? "https://api.dataforseo.com/v3";
     this.auth = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
@@ -211,13 +211,8 @@ export class DataforseoClient {
     rec: CallRecorder,
     opts: { depth?: number; device?: "desktop" | "mobile" } = {},
   ): Promise<SerpResult> {
-    const endpoint = "serp/google/organic/task_post";
-    const payload = {
-      keyword,
-      ...(await this.serpParams(market, rec)),
-      device: opts.device ?? "desktop",
-      depth: opts.depth ?? 10,
-    };
+    const endpoint = SERP_TASK_ENDPOINT;
+    const payload = serpTaskPayload(keyword, await this.serpParams(market, rec), opts);
     const hash = requestHash(endpoint, payload);
     const hit = this.hit(endpoint, hash, rec);
     if (hit) return parseSerp(keyword, hit.result);
@@ -381,7 +376,7 @@ export class DataforseoClient {
     rec: CallRecorder,
     opts: { depth?: number; device?: "desktop" | "mobile"; chunk?: number } = {},
   ): Promise<SerpBatchResult> {
-    const endpoint = "serp/google/organic/task_post";
+    const endpoint = SERP_TASK_ENDPOINT;
     const serps = new Map<string, SerpResult>();
     const blocked: string[] = [];
     const failed: SerpBatchResult["failed"] = [];
@@ -396,12 +391,7 @@ export class DataforseoClient {
     const pending = new Map<string, Job>();
     const where = await this.serpParams(market, rec);
     for (const keyword of [...new Set(keywords)]) {
-      const payload = {
-        keyword,
-        ...where,
-        device: opts.device ?? "desktop",
-        depth: opts.depth ?? 10,
-      };
+      const payload = serpTaskPayload(keyword, where, opts);
       const hash = requestHash(endpoint, payload);
       const hit = this.hit(endpoint, hash, rec);
       if (hit) {

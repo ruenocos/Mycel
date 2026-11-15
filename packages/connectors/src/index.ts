@@ -15,6 +15,13 @@ export {
   marketParams,
 } from "./dataforseo/locations.ts";
 export * from "./dataforseo/parse.ts";
+export {
+  monthSpendUsd,
+  planSerpBatch,
+  SERP_LIST_PRICE_USD,
+  SERP_TASK_ENDPOINT,
+  type SerpPlan,
+} from "./dataforseo/plan.ts";
 export * from "./dataforseo/url.ts";
 export {
   GscClient,
@@ -26,6 +33,7 @@ export {
   loadServiceAccount,
   type ServiceAccount,
 } from "./gsc/client.ts";
+export { CONNECTORS_VERSION, USER_AGENT, withUserAgent } from "./http.ts";
 export {
   type GenerateOptions,
   LlmClient,
@@ -43,7 +51,6 @@ export {
   type LlmRecorder,
   nullRecorder,
 } from "./recorder.ts";
-
 export {
   decodeEntities,
   htmlToText,
@@ -52,5 +59,3 @@ export {
   WordPressError,
   type WordPressOptions,
 } from "./wordpress/client.ts";
-
-export const CONNECTORS_VERSION = "0.0.0";

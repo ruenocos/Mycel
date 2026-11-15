@@ -1,5 +1,6 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,7 +11,7 @@ import {
   LlmProviderError,
   WordPressError,
 } from "@mycel/connectors";
-import { ERROR_CODES, MycelError, RunStore } from "@mycel/core";
+import { ERROR_CODES, listRuns, MycelError, RunStore } from "@mycel/core";
 import { ClusterSet } from "@mycel/schema";
 import type { Command } from "commander";
 import { describe, expect, it } from "vitest";
@@ -302,4 +303,60 @@ describe("mycel, as a real process", () => {
     expect(missing.stderr).toContain("error       no clusters file at /nope/clusters.json");
     expect(missing.stderr).not.toMatch(/\n\s+at /);
   }, 30_000);
+
+  // Windows has no SIGTERM to catch: a killed process there is the "stopped" case, which
+  // runStatus() covers. Ctrl+C does arrive as SIGINT on Windows, through the same handler.
+  it.skipIf(process.platform === "win32")(
+    "marks the run interrupted and exits 143 when it is told to stop mid-run",
+    async () => {
+      // A model server that accepts the call and never answers: the run is busy for sure.
+      const sockets = new Set<import("node:net").Socket>();
+      const server = createServer(() => {});
+      server.on("connection", (socket) => sockets.add(socket));
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      const runsDir = join(mkdtempSync(join(tmpdir(), "mycel-cli-signal-")), "runs");
+      try {
+        const child = spawn(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "apps/cli/src/index.ts",
+            "--runs-dir",
+            runsDir,
+            "llm",
+            "ping",
+            "--provider",
+            "ollama",
+          ],
+          {
+            cwd: root,
+            env: { ...process.env, OLLAMA_HOST: `http://127.0.0.1:${port}`, OLLAMA_API_KEY: "" },
+          },
+        );
+        let stderr = "";
+        const busy = new Promise<void>((done) => {
+          child.stderr.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+            if (stderr.includes("running     llm-ping")) done();
+          });
+        });
+        const exit = new Promise<number | null>((done) => child.on("exit", (code) => done(code)));
+        await busy;
+        child.kill("SIGTERM");
+        expect(await exit).toBe(143);
+        expect(stderr).toContain("interrupted llm ping for none, run ");
+
+        const [run] = listRuns(runsDir);
+        expect(run).toMatchObject({ status: "interrupted", command: "llm ping" });
+        expect(run?.steps.at(-1)).toMatchObject({ name: "llm-ping", status: "interrupted" });
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      }
+    },
+    20_000,
+  );
 });

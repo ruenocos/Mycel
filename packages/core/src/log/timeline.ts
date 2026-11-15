@@ -1,7 +1,37 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { MycelError } from "./errors.ts";
-import type { LogLevel, LogLine, RunMeta, StepStatus } from "./types.ts";
+import type { LogLevel, LogLine, RunMeta, RunStatus, StepStatus } from "./types.ts";
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 sends nothing: it only asks whether the process exists
+    return true;
+  } catch (err) {
+    // EPERM: it exists, but belongs to someone else.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * The status to show. A run that says "running" on disk but whose process is gone (the PC was
+ * switched off, the process was killed) is "stopped": nothing will ever finish it. A run from
+ * before the machine last started can't be alive either, whoever holds its process id now.
+ */
+export function runStatus(
+  meta: RunMeta,
+  probe: { alive(pid: number): boolean; bootedAt: number } = {
+    alive,
+    bootedAt: Date.now() - uptime() * 1000,
+  },
+): RunStatus {
+  if (meta.status !== "running") return meta.status;
+  // Runs from before run.json stored a pid: no way to tell, so say what the file says.
+  if (meta.pid === undefined) return "running";
+  if (new Date(meta.startedAt).getTime() < probe.bootedAt - 60_000) return "stopped";
+  return probe.alive(meta.pid) ? "running" : "stopped";
+}
 
 export function listRuns(runsDir: string): RunMeta[] {
   if (!existsSync(runsDir)) return [];
@@ -91,7 +121,7 @@ export function formatTimeline(runsDir: string, runId: string, opts: TimelineOpt
   const min = LEVELS[opts.minLevel ?? "info"];
   const out: string[] = [
     `Run ${meta.runId}`,
-    `  client ${meta.client} · command ${meta.command} · status ${meta.status} · cost ${usd(meta.costUsd)} · git ${meta.gitCommit ?? "none"}`,
+    `  client ${meta.client} · command ${meta.command} · status ${runStatus(meta)} · cost ${usd(meta.costUsd)} · git ${meta.gitCommit ?? "none"}`,
     "",
   ];
   for (const line of readRunLog(runsDir, runId)) {
@@ -107,6 +137,17 @@ export function formatTimeline(runsDir: string, runId: string, opts: TimelineOpt
   if (failed.length > 0) {
     out.push("", `Failed: ${failed.map((s) => s.name).join(", ")}. Full stack traces in run.json.`);
   }
+  const status = runStatus(meta);
+  if (status === "interrupted" || status === "stopped") {
+    const busy = meta.steps.filter((s) => s.status === "running" || s.status === "interrupted");
+    const during = busy.length ? ` during ${busy.map((s) => s.name).join(", ")}` : "";
+    out.push(
+      "",
+      status === "interrupted"
+        ? `Interrupted${during}. What was paid for is in the cache.`
+        : `Stopped${during}: the process that ran it is gone. What was paid for is in the cache.`,
+    );
+  }
   return out.join("\n");
 }
 
@@ -120,6 +161,8 @@ export interface RunStepSummary {
   apiCalls: number;
   /** How many of the API calls were answered from the cache. */
   cachedApiCalls: number;
+  /** The step did not run: its output was taken from this earlier run (--resume). */
+  reusedFrom?: string;
 }
 
 /** A run in a handful of numbers: what the end of a command shows instead of the full timeline. */
@@ -127,7 +170,7 @@ export interface RunSummary {
   runId: string;
   client: string;
   command: string;
-  status: RunMeta["status"];
+  status: RunStatus;
   costUsd: number;
   durationMs?: number;
   steps: RunStepSummary[];
@@ -141,9 +184,18 @@ const between = (from: string, to?: string) =>
 export function summarizeRun(runsDir: string, runId: string): RunSummary {
   const meta = readRunMeta(runsDir, runId);
   const cached = new Map<string, number>();
+  const reused = new Map<string, string>();
   let warnings = 0;
   for (const line of readRunLog(runsDir, runId)) {
     if (line.level === "warn") warnings += 1;
+    if (line.event === "step.reused" && line.step) {
+      reused.set(
+        line.step,
+        String(line.data?.from ?? "")
+          .split(/[\\/]/)
+          .pop() ?? "",
+      );
+    }
     if (line.event === "api.call" && line.step && line.data?.cache === "hit") {
       cached.set(line.step, (cached.get(line.step) ?? 0) + 1);
     }
@@ -153,7 +205,7 @@ export function summarizeRun(runsDir: string, runId: string): RunSummary {
     runId: meta.runId,
     client: meta.client,
     command: meta.command,
-    status: meta.status,
+    status: runStatus(meta),
     costUsd: meta.costUsd,
     ...(total !== undefined ? { durationMs: total } : {}),
     steps: meta.steps.map((s) => {
@@ -166,6 +218,7 @@ export function summarizeRun(runsDir: string, runId: string): RunSummary {
         llmCalls: s.llmCalls,
         apiCalls: s.apiCalls,
         cachedApiCalls: cached.get(s.name) ?? 0,
+        ...(reused.has(s.name) ? { reusedFrom: reused.get(s.name) ?? "" } : {}),
       };
     }),
     warnings,
@@ -206,9 +259,17 @@ const LABEL = 12;
 export function formatRunSummary(summary: RunSummary): string[] {
   const width = Math.max(0, ...summary.steps.map((s) => s.name.length));
   const lines = summary.steps.map((s, i) => {
-    const mark = s.status === "failed" ? "FAILED" : s.status === "running" ? "not finished" : "";
+    const mark =
+      s.status === "failed"
+        ? "FAILED"
+        : s.status === "interrupted"
+          ? "interrupted"
+          : s.status === "running"
+            ? "not finished"
+            : "";
     const cells = [s.name.padEnd(width), duration(s.durationMs).padStart(7), usd(s.costUsd)];
-    const tail = [calls(s), mark].filter(Boolean).join("  ");
+    const reuse = s.reusedFrom !== undefined ? `reused from ${s.reusedFrom}` : "";
+    const tail = [calls(s), reuse, mark].filter(Boolean).join("  ");
     return `${(i === 0 ? "steps" : "").padEnd(LABEL)}${cells.join("  ")}${tail ? `  ${tail}` : ""}`;
   });
   if (summary.warnings) {

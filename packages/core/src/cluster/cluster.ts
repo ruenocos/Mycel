@@ -595,6 +595,13 @@ export const ClusterStepInput = z.object({
 });
 export type ClusterStepInput = z.input<typeof ClusterStepInput>;
 
+/** The searches the cluster step fetches a SERP for: every query the filter kept. */
+export function clusterSerpQueries(
+  queries: z.output<typeof ClusterStepInput>["queries"],
+): string[] {
+  return queries.queries.filter((q) => q.filter?.kept).map((q) => q.text);
+}
+
 export function clusterStep(port: SerpBatchPort) {
   return defineStep({
     name: "cluster",
@@ -605,7 +612,7 @@ export function clusterStep(port: SerpBatchPort) {
       const kept = input.queries.queries.filter((q) => q.filter?.kept);
       const host = cleanDomain(new URL(input.context.site.url).hostname);
       const { serps, blocked, failed } = await port.serpOrganicBatch(
-        kept.map((q) => q.text),
+        clusterSerpQueries(input.queries),
         input.context.market,
         ctx,
       );
