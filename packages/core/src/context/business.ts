@@ -478,6 +478,7 @@ export function applyOwnerAnswers(
 ): BusinessProfile {
   const a = OwnerAnswersSchema.parse(input);
   const removed = new Set(a.removed);
+  const steps = new Set(a.conversionSteps);
   const into = new Map(
     a.merged.filter((m) => m.id !== m.into && !removed.has(m.into)).map((m) => [m.id, m.into]),
   );
@@ -491,7 +492,7 @@ export function applyOwnerAnswers(
   const offerings: Offering[] = [];
   const ids = new Set<string>();
   for (const o of p.offerings) {
-    if (removed.has(o.id) || into.has(o.id)) continue;
+    if (removed.has(o.id) || into.has(o.id) || steps.has(o.id)) continue;
     const set = edits.get(o.id);
     const parts = folded.get(o.id) ?? [];
     const merged = { ...o, ...(set ?? {}) } as Offering;
@@ -749,6 +750,7 @@ export function simulateOwner(
     by,
     at,
     removed,
+    conversionSteps: [],
     merged,
     edits,
     added,

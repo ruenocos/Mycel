@@ -171,6 +171,17 @@ describe("business profile", () => {
     expect(parsed.offerings[0]?.subOfferings).toEqual(["manuele therapie"]);
   });
 
+  it("a conversion step leaves the offerings without becoming 'not offered'", () => {
+    const { profile } = toBusinessProfile(proposal(), evidence, ctx);
+    const done = applyOwnerAnswers(profile, {
+      by: "Wons",
+      at: "2026-11-15T10:00:00.000Z",
+      conversionSteps: ["dry-needling"],
+    });
+    expect(done.offerings.map((o) => o.id)).toEqual(["fysiotherapie"]);
+    expect(done.notOffered.map((n) => n.name)).not.toContain("dry needling");
+  });
+
   it("merging the owner's answers doesn't repeat what the proposal already has", () => {
     const { profile } = toBusinessProfile(proposal(), evidence, ctx);
     const done = applyOwnerAnswers(profile, {

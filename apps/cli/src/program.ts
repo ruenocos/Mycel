@@ -260,6 +260,7 @@ export function buildProgram(
     .requiredOption("--answers <file>", "the owner's answers (OwnerAnswers JSON)")
     .option("--by <name>", "who answered; must match the file's by")
     .option("--out <file>", "where to write it (default: business.json next to the proposal)")
+    .option("--debug", "mirror logs to the console")
     .action((proposedFile: string, opts: { answers: string; by?: string; out?: string }) => {
       try {
         const res = businessApply({
@@ -280,6 +281,7 @@ export function buildProgram(
     .argument("<profile>", "business.proposed.json or business.json")
     .requiredOption("--key <file>", "the answer key")
     .option("--language <code>", "market language", "nl")
+    .option("--debug", "mirror logs to the console")
     .action((profileFile: string, opts: { key: string; language: string }) => {
       try {
         for (const l of businessScore({ profileFile, keyFile: opts.key, language: opts.language })
@@ -301,6 +303,7 @@ export function buildProgram(
       "--out <file>",
       "where to write the answers (default: owner-answers.json next to the proposal)",
     )
+    .option("--debug", "mirror logs to the console")
     .action(
       (
         proposedFile: string,

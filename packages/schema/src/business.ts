@@ -130,6 +130,11 @@ export const OwnerAnswers = z.object({
   /** Offering ids the owner removed: they move to notOffered. */
   removed: z.array(z.string()).default([]),
   /**
+   * Offering ids that are how a visitor converts, not what the business sells (a free guide, an
+   * intro call): they leave the offerings without going to notOffered.
+   */
+  conversionSteps: z.array(z.string()).default([]),
+  /**
    * Offerings that are part of another one ("XL kamerplanten" under "grote kamerplanten"): the
    * offering folds into `into` as a sub-offering. Not the same as removed: it is still offered.
    */
