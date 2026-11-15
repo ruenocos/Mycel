@@ -25,6 +25,8 @@ pnpm mycel --help      # the commands in pipeline order, examples and the exit c
 
 Every command ends with a short run summary, the files it wrote and the next command to run. A failure prints what went wrong, the fix and a code; `mycel logs <run>` has the full timeline.
 
+Before a paid run, `--dry-run` on `mycel cluster` or `mycel research` shows what it would cost without buying anything. A research run that failed continues with `--resume <run>`: it keeps its seeds, so what was already bought is reused.
+
 Node 22+ and pnpm 10.
 
 ## Layout

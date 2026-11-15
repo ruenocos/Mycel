@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterSerp, SerpBatchPort } from "@mycel/core";
@@ -90,6 +90,64 @@ describe("mycel cluster", () => {
     await expect(
       clusterRun({ runsDir: join(dir, "runs"), queriesFile: join(dir, "queries.json"), env: {} }),
     ).rejects.toThrow("isn't confirmed yet");
+  });
+
+  it("--dry-run counts what the run would buy, without a login, a run or a file", async () => {
+    const dir = tmp();
+    const context = JSON.parse(readFileSync(join(fixture("plantpost"), "context.json"), "utf8"));
+    writeFileSync(join(dir, "context.json"), JSON.stringify(context));
+    writeFileSync(
+      join(dir, "queries.json"),
+      JSON.stringify({
+        site: context.site,
+        market: context.market,
+        stats: { total: 4, kept: 3, dropped: {} },
+        queries: [
+          query("kamerplant kopen", 900),
+          query("kamerplanten kopen", 300),
+          query("monstera"),
+          { ...query("gratis plaatjes"), filter: { kept: false, reason: "noise" } },
+        ],
+      }),
+    );
+    const res = await clusterRun({
+      runsDir: join(dir, "runs"),
+      queriesFile: join(dir, "queries.json"),
+      cacheDir: join(dir, "cache"),
+      allowUnconfirmed: true,
+      dryRun: true,
+      // No DataforSEO login, and no port: a dry run needs neither.
+      env: {},
+    });
+    expect(res.ok).toBe(true);
+    expect(res.runId).toBeUndefined();
+    const text = res.lines.join("\n");
+    expect(text).toContain("nothing is bought and no file is written");
+    expect(text).toContain("SERPs       3 needed, one per kept query");
+    expect(text).toContain("3 to buy");
+    expect(text).toContain("cost        about $0.0018 (3 x $0.0006, the list price");
+    expect(text).toContain("budget      fits --budget 3; this month $0.00 of $50");
+    expect(res.next?.[0]?.note).toBe(
+      "the same command without --dry-run, plus --live-serp --budget 3 to buy what is missing",
+    );
+    // Nothing happened on disk: no run, no output, not even a cache folder.
+    for (const path of ["runs", "clusters.json", "cache"]) {
+      expect(existsSync(join(dir, path)), path).toBe(false);
+    }
+
+    // A budget below the estimate is said up front, with the amount that covers it.
+    const tight = await clusterRun({
+      runsDir: join(dir, "runs"),
+      queriesFile: join(dir, "queries.json"),
+      cacheDir: join(dir, "cache"),
+      allowUnconfirmed: true,
+      dryRun: true,
+      budgetUsd: 0.001,
+      env: {},
+    });
+    expect(tight.lines.join("\n")).toContain(
+      "over --budget 0.001: the run would stop early. All of it needs --budget 0.01",
+    );
   });
 
   it("rejects a budget that isn't a number, so the cap can't silently turn off", async () => {

@@ -46,11 +46,11 @@ export function readInput<S extends z.ZodType>(
   return parsed.data;
 }
 
-/** Later steps run on a context a person confirmed (ADR 0006), unless a dry run is asked for. */
+/** Later steps run on a context a person confirmed (ADR 0006), unless a trial run is asked for. */
 export function assertConfirmed(context: ClientContext, file: string, allowUnconfirmed = false) {
   if (context.confirmed || allowUnconfirmed) return;
   throw new MycelError("NOT_CONFIRMED", `${file} isn't confirmed yet`, {
-    fix: `run ${command("context confirm", file)} first (or add --allow-unconfirmed for a dry run)`,
+    fix: `run ${command("context confirm", file)} first (or add --allow-unconfirmed for a trial run)`,
   });
 }
 

@@ -1,6 +1,7 @@
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { FileCache, requestHash } from "../dataforseo/cache.ts";
+import { withUserAgent } from "../http.ts";
 import type { CallRecorder } from "../recorder.ts";
 
 /** Google Search Console, read-only, via a service account (issue #14). */
@@ -88,7 +89,7 @@ export class GscClient {
   private token: { value: string; expiresAt: number } | null = null;
 
   constructor(private readonly opts: GscOptions) {
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = withUserAgent(opts.fetchImpl ?? fetch);
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? Date.now;
     this.cache = opts.cacheDir ? new FileCache(opts.cacheDir) : null;

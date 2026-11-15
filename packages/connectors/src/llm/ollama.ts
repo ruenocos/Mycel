@@ -1,3 +1,4 @@
+import { withUserAgent } from "../http.ts";
 import {
   type ChatRequest,
   type ChatResponse,
@@ -24,7 +25,7 @@ export class OllamaProvider implements LlmProvider {
 
   constructor(private readonly opts: OllamaOptions) {
     this.endpoint = `${opts.host.replace(/\/$/, "")}/api/chat`;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = withUserAgent(opts.fetchImpl ?? fetch);
   }
 
   private headers(): Record<string, string> {

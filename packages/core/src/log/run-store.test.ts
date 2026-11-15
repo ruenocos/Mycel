@@ -5,13 +5,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { MycelError } from "./errors.ts";
 import { memorySink } from "./logger.ts";
 import { REDACTED, redact } from "./redact.ts";
-import { RunStore, setRunProgress } from "./run-store.ts";
+import { interruptActiveRuns, RunStore, setRunProgress } from "./run-store.ts";
 import {
   formatRunSummary,
   formatTimeline,
   listRuns,
   readRunMeta,
   resolveRunId,
+  runStatus,
   summarizeRun,
 } from "./timeline.ts";
 
@@ -222,6 +223,58 @@ describe("run progress", () => {
     const quiet = RunStore.create({ runsDir, client: "x", command: "c", cliVersion: "0" });
     await quiet.step("third", async () => undefined);
     expect(seen).toHaveLength(2);
+  });
+});
+
+describe("a run that was stopped", () => {
+  it("is marked interrupted on a signal, with the step it was in", async () => {
+    const run = RunStore.create({ runsDir, client: "x", command: "research", cliVersion: "0" });
+    await run.step("done", async () => undefined);
+    // A step that never ends: the run is busy when the signal comes.
+    void run.step("busy", () => new Promise(() => {}));
+    const marked = interruptActiveRuns("SIGINT");
+    expect(marked.map((m) => m.runId)).toContain(run.runId);
+
+    const meta = readRunMeta(runsDir, run.runId);
+    expect(meta.status).toBe("interrupted");
+    expect(meta.endedAt).toBeDefined();
+    expect(meta.steps.map((s) => [s.name, s.status])).toEqual([
+      ["done", "ok"],
+      ["busy", "interrupted"],
+    ]);
+    expect(formatTimeline(runsDir, run.runId)).toContain("Interrupted during busy.");
+    expect(formatRunSummary(summarizeRun(runsDir, run.runId)).join("\n")).toContain("interrupted");
+    // Marked once: a second signal has nothing left to do.
+    expect(interruptActiveRuns("SIGINT").map((m) => m.runId)).not.toContain(run.runId);
+  });
+
+  it("leaves a finished run alone", () => {
+    const run = RunStore.create({ runsDir, client: "x", command: "c", cliVersion: "0" });
+    run.finish();
+    expect(interruptActiveRuns("SIGTERM").map((m) => m.runId)).not.toContain(run.runId);
+    expect(readRunMeta(runsDir, run.runId).status).toBe("ok");
+  });
+
+  it("shows a run whose process is gone as stopped, not as running for ever", () => {
+    const run = RunStore.create({ runsDir, client: "x", command: "c", cliVersion: "0" });
+    const meta = readRunMeta(runsDir, run.runId);
+    expect(meta).toMatchObject({ status: "running", pid: process.pid });
+    const started = new Date(meta.startedAt).getTime();
+    const booted = started - 3_600_000;
+
+    expect(runStatus(meta)).toBe("running"); // this very process
+    expect(runStatus(meta, { alive: () => true, bootedAt: booted })).toBe("running");
+    expect(runStatus(meta, { alive: () => false, bootedAt: booted })).toBe("stopped");
+    // The PC restarted since: whoever holds that process id now, it is not this run.
+    expect(runStatus(meta, { alive: () => true, bootedAt: started + 3_600_000 })).toBe("stopped");
+    // Runs from before the pid was stored can't be judged.
+    const { pid: _pid, ...old } = meta;
+    expect(runStatus(old, { alive: () => false, bootedAt: booted })).toBe("running");
+    // A finished run keeps its own status.
+    expect(runStatus({ ...meta, status: "failed" }, { alive: () => false, bootedAt: 0 })).toBe(
+      "failed",
+    );
+    interruptActiveRuns("test cleanup");
   });
 });
 

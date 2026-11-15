@@ -1,5 +1,6 @@
 import type { SitePage, SitePages } from "@mycel/schema";
 import { FileCache, requestHash } from "../dataforseo/cache.ts";
+import { withUserAgent } from "../http.ts";
 import type { CallRecorder } from "../recorder.ts";
 
 /**
@@ -116,7 +117,7 @@ export class WordPressClient {
   constructor(private readonly opts: WordPressOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
     this.cache = opts.cacheDir ? new FileCache(opts.cacheDir) : null;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = withUserAgent(opts.fetchImpl ?? fetch);
   }
 
   /** Language and region from the home page's <html lang>, e.g. "nl-NL" → nl / NL. */

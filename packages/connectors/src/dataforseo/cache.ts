@@ -42,6 +42,11 @@ export class FileCache {
     return join(this.dir, hash.slice(0, 2), `${hash}.json`);
   }
 
+  /** Whether a response is stored, without reading it. */
+  has(hash: string): boolean {
+    return existsSync(this.path(hash));
+  }
+
   get<T>(hash: string): CacheEntry<T> | null {
     const p = this.path(hash);
     if (!existsSync(p)) return null;

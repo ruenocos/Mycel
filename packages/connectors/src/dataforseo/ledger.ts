@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface LedgerEntry {
@@ -26,6 +26,33 @@ export class SpendLedger {
 
   private path(month: string): string {
     return join(this.dir, `${month}.jsonl`);
+  }
+
+  /** One month's entries, read without creating or seeding anything (for a cost preview). */
+  static read(dir: string, month: string): LedgerEntry[] {
+    const p = join(dir, `${month}.jsonl`);
+    if (!existsSync(p)) return [];
+    return readFileSync(p, "utf8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line) as LedgerEntry);
+  }
+
+  /** What the most recent paid call to an endpoint cost, looking back through the months. */
+  static lastCost(dir: string, endpoint: string): number | undefined {
+    if (!existsSync(dir)) return undefined;
+    const months = readdirSync(dir)
+      .filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f))
+      .sort()
+      .reverse();
+    for (const file of months) {
+      const paid = SpendLedger.read(dir, file.slice(0, 7)).filter(
+        (e) => e.endpoint === endpoint && e.costUsd > 0,
+      );
+      const last = paid.at(-1);
+      if (last) return last.costUsd;
+    }
+    return undefined;
   }
 
   private append(month: string, entries: LedgerEntry[]): void {

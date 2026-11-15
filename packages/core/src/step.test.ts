@@ -85,4 +85,32 @@ describe("runStep", () => {
     await runStep(third, bumped, { n: 5 }, { resumeFromDir: first.dir });
     expect(ran).toBe(true);
   });
+
+  it("does not reuse an output that answered a different input, and resumes from a resumed run", async () => {
+    const first = newRun();
+    await runStep(first, double, { n: 5 });
+
+    // Other input: the saved output is for another question, so the step runs.
+    const other = newRun();
+    await expect(runStep(other, double, { n: 6 }, { resumeFromDir: first.dir })).resolves.toEqual({
+      n: 12,
+    });
+
+    // A resumed run saves its input too, so it can be resumed from in turn.
+    let ran = false;
+    const spy = defineStep({
+      ...double,
+      run: async () => {
+        ran = true;
+        return { n: 0 };
+      },
+    });
+    const second = newRun();
+    await runStep(second, spy, { n: 5 }, { resumeFromDir: first.dir });
+    const third = newRun();
+    await expect(runStep(third, spy, { n: 5 }, { resumeFromDir: second.dir })).resolves.toEqual({
+      n: 10,
+    });
+    expect(ran).toBe(false);
+  });
 });

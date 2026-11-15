@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+/** DataforSEO keeps standard-queue results for 30 days; older saved task ids are posted again. */
+export const PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+
 /** A standard-queue task that was posted (and paid for) but whose result isn't in the cache yet. */
 export interface PendingTask {
   taskId: string;
