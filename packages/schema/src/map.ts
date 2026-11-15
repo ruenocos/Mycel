@@ -4,16 +4,55 @@ import { CentralEntity } from "./context.ts";
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
 export const LinkOut = z.object({
   to: z.string().min(1),
-  type: z.enum(["to_core", "sibling", "bridge", "from_home"]),
+  /**
+   * to_core: up to the core (Koray step 20). parent / child: the hub and its pages. sibling: pages
+   * under one hub. bridge: a side link between two hubs (contextual bridge). from_home: the
+   * homepage links to a quality node (step 13).
+   */
+  type: z.enum(["to_core", "parent", "child", "sibling", "bridge", "from_home"]),
   anchor: z.string().min(1).optional(),
 });
 export type LinkOut = z.infer<typeof LinkOut>;
+
+/** Search intent of a page: from the queries' data and the results page, the model only breaks ties. */
+export const PageIntent = z.object({
+  main: z.enum(["informational", "commercial", "transactional", "navigational", "local"]),
+  /** A second intent is nearly as strong: often worth two pages (a cost guide and a service page). */
+  mixed: z.boolean(),
+  /**
+   * What decided it: query data and SERP features; a core page naming one of the client's
+   * offerings (a service page); or only the tier when there was no data.
+   */
+  source: z.enum(["data", "offering", "tier"]),
+});
+export type PageIntent = z.infer<typeof PageIntent>;
+
+/** A cluster that doesn't get its own page: a section on this page, or micro context. */
+export const MapSection = z.object({
+  clusterId: z.string().min(1),
+  mainQuery: z.string().min(1),
+  qdp: z.enum(["section", "micro"]),
+  queries: z.array(z.string()).default([]),
+  volume: z.number().int().nonnegative().default(0),
+});
+export type MapSection = z.infer<typeof MapSection>;
 
 export const MapNode = z.object({
   id: z.string().min(1),
   section: z.enum(["core", "outer"]),
   level: z.enum(["root", "seed", "node"]),
   parentId: z.string().optional(),
+  /**
+   * "site": an existing section of the client's site (a service, category or location page).
+   * It stays a hub at its URL; search data hangs new pages under it instead of replacing it.
+   * "theme": a new hub page that groups pages sharing one theme.
+   */
+  hub: z.enum(["site", "theme"]).optional(),
+  /**
+   * Display name in the market language, for people: a site hub's own page heading
+   * ("Projectplanning"), else a short title the model wrote from the main search.
+   */
+  name: z.string().min(1).optional(),
   /** Koray raw node: entity + attribute, e.g. ERP + bouwbedrijven. */
   rawNode: z.object({ entity: z.string().min(1), attribute: z.string().min(1) }),
   /** One macro context per page. */
@@ -21,6 +60,9 @@ export const MapNode = z.object({
   clusterId: z.string().optional(),
   mainQuery: z.string().min(1),
   queries: z.array(z.string()).default([]),
+  /** Clusters answered on this page instead of their own (QDP, step 10). */
+  sections: z.array(MapSection).default([]),
+  intent: PageIntent,
   proposedUrl: z.string().regex(/^\/[a-z0-9\-/]*$/, "lowercase slug path starting with /"),
   /** Null means a new page. */
   existingPage: z
@@ -40,8 +82,16 @@ export const MapNode = z.object({
       gscImpressions: z.number().int().nonnegative().optional(),
     })
     .default({}),
-  /** 1 = do first. From relevance x business value x demand. */
+  /** 1 = do first. The first plan ("now") holds 1-3, later work 4-5, pages that are fine 5. */
   priority: z.number().int().min(1).max(5),
+  /**
+   * What to do with this page. keep: an existing page that already covers it. improve: an
+   * existing page that only partly covers it. resolve: existing pages compete for it (see
+   * conflict). create: a new page.
+   */
+  action: z.enum(["keep", "improve", "resolve", "create"]),
+  /** In the first plan, or later. Absent for pages to keep as they are. */
+  wave: z.enum(["now", "later"]).optional(),
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
   linksOut: z.array(LinkOut).default([]),
   /** Null when no SERP was fetched for this node. */
@@ -63,12 +113,25 @@ export const MapHeader = z.object({
 });
 export type MapHeader = z.infer<typeof MapHeader>;
 
+/** A search the model judged not to belong in this business's map, with the reason. */
+export const LeftOut = z.object({
+  mainQuery: z.string().min(1),
+  volume: z.number().int().nonnegative().default(0),
+  reason: z.enum(["other_business", "place_not_served", "off_offer"]),
+});
+export type LeftOut = z.infer<typeof LeftOut>;
+
 /**
  * One topical map. The refinements are the deterministic layer-1 quality checks
  * from the plan: unique ids, valid references, every outer node links to a core node.
  */
 export const TopicalMap = z
-  .object({ header: MapHeader, nodes: z.array(MapNode).min(1) })
+  .object({
+    header: MapHeader,
+    nodes: z.array(MapNode).min(1),
+    /** Searches left out of the map, shown so the owner can put one back. */
+    leftOut: z.array(LeftOut).default([]),
+  })
   .superRefine((map, ctx) => {
     const ids = new Set<string>();
     for (const [i, n] of map.nodes.entries()) {
@@ -99,6 +162,22 @@ export const TopicalMap = z
           message: `outer node ${n.id} must link to a core node`,
         });
     }
+    for (const [i, n] of map.nodes.entries()) {
+      const seen = new Set<string>([n.id]);
+      let p = n.parentId ? byId.get(n.parentId) : undefined;
+      while (p) {
+        if (seen.has(p.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["nodes", i, "parentId"],
+            message: `parent loop at ${n.id}`,
+          });
+          break;
+        }
+        seen.add(p.id);
+        p = p.parentId ? byId.get(p.parentId) : undefined;
+      }
+    }
     if (!map.nodes.some((n) => n.level === "root"))
       ctx.addIssue({ code: "custom", path: ["nodes"], message: "map needs a root node" });
   });
@@ -108,5 +187,9 @@ export type TopicalMap = z.infer<typeof TopicalMap>;
 export const SiteMaps = z.object({
   site: z.string().min(1),
   maps: z.array(TopicalMap).min(1),
+  /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
+  outside: z
+    .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))
+    .default([]),
 });
 export type SiteMaps = z.infer<typeof SiteMaps>;

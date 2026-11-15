@@ -40,8 +40,10 @@ import { defineStep } from "../step.ts";
  *    query prefers the plain form.
  * 6: variant keys of every member count (not only hubs); topic keys ignore case, word order and
  *    plurals; a bridge can sit on the page with its own topic without a shared result.
+ * 7: a variant of any member (not only the hub) finds its earlier cluster; a cluster's topic is
+ *    its members' majority topic, not just its hub's.
  */
-export const CLUSTER_VERSION = "6";
+export const CLUSTER_VERSION = "7";
 
 /** What core needs from a SERP. The connectors' SerpResult satisfies it structurally. */
 export interface ClusterSerp {
@@ -115,7 +117,7 @@ export const ClusterOptions = z.object({
 });
 export type ClusterOptions = z.infer<typeof ClusterOptions>;
 
-const STOPWORDS: Record<string, Set<string>> = {
+export const STOPWORDS: Record<string, Set<string>> = {
   nl: new Set(["de", "het", "een", "en", "van", "voor", "in", "op", "met", "te", "s", "je", "jij"]),
   en: new Set(["the", "a", "an", "and", "of", "for", "in", "on", "with", "to", "s"]),
 };
@@ -277,8 +279,14 @@ export function clusterQueries(input: ClusterInput): {
   const byKey = new Map<string, Draft>();
   const afterVariants: Draft[] = [];
   for (const d of drafts) {
-    const key = variantKey(d.hub.text, language);
-    const first = key ? byKey.get(key) : undefined;
+    // Any member's form counts on this side too: "kosten plat dak vervangen" in one cluster and
+    // "vervangen plat dak kosten" in another are the same words, so the same page.
+    let first: Draft | undefined;
+    for (const m of [d.hub, ...d.members.map((x) => x.q)]) {
+      const k = variantKey(m.text, language);
+      first = k ? byKey.get(k) : undefined;
+      if (first) break;
+    }
     if (first) fold(first, d, `spelling variant of "${first.hub.text}"`);
     else {
       // Every member's form counts: "groothandel software" may be a member elsewhere.
@@ -311,8 +319,21 @@ export function clusterQueries(input: ClusterInput): {
   const byTopicTier = new Map<string, Draft>();
   const byTopic = new Map<string, Draft>();
   const afterTopics: Draft[] = [];
+  /** A cluster's topic is what most of its members are about; the hub's breaks a tie. */
+  const draftTopic = (d: Draft) => {
+    const count = new Map<string, number>();
+    for (const m of d.members) {
+      const t = topicOf(m.q);
+      if (t) count.set(t, (count.get(t) ?? 0) + 1);
+    }
+    const own = topicOf(d.hub);
+    let best = own;
+    let n = own ? (count.get(own) ?? 0) : 0;
+    for (const [t, c] of count) if (c > n) [best, n] = [t, c];
+    return best;
+  };
   for (const d of afterVariants) {
-    const topic = topicOf(d.hub);
+    const topic = draftTopic(d);
     const sameTier = topic ? byTopicTier.get(`${topic}|${tierOf(d.hub)}`) : undefined;
     const any = topic ? byTopic.get(topic) : undefined;
     // Aliases of one thing often have unrelated SERPs, so the same tier is enough; across tiers
@@ -488,7 +509,7 @@ export function clusterQueries(input: ClusterInput): {
     return why.length > 0;
   });
   const leftOut: { query: string; reason: string }[] = [];
-  const hubTopic = new Map(kept.map((d) => [d.hub.text, topicOf(d.hub)]));
+  const hubTopic = new Map(kept.map((d) => [d.hub.text, draftTopic(d)]));
   const weights = termWeights(clusters.map((c) => c.mainQuery));
   for (const c of clusters) {
     if (c.qdpWhy) continue;

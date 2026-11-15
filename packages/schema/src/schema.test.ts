@@ -24,10 +24,14 @@ const node = (over: Partial<MapNode> & Pick<MapNode, "id">): MapNode => ({
   macroContext: "Houseplant care",
   mainQuery: "kamerplant verzorgen",
   queries: [],
+  sections: [],
+  intent: { main: "informational", mixed: false, source: "data" },
   proposedUrl: "/kamerplanten/verzorging/",
   existingPage: null,
   demand: {},
   priority: 2,
+  action: "create",
+  wave: "now",
   flags: { quality: false, trending: false },
   linksOut: [],
   aiOverview: null,
@@ -122,6 +126,13 @@ describe("TopicalMap checks", () => {
     expect(messages).toMatch(/duplicate id care/);
     expect(messages).toMatch(/unknown node ghost/);
     expect(messages).toMatch(/needs a root/);
+  });
+
+  it("catches a parent loop", () => {
+    const a = node({ id: "a", parentId: "b" });
+    const b = node({ id: "b", parentId: "a" });
+    const r = TopicalMap.safeParse({ header, nodes: [node({ id: "r", level: "root" }), a, b] });
+    expect(r.error?.issues.map((i) => i.message).join("\n")).toMatch(/parent loop/);
   });
 
   it("insists on a plain-language why and a clean slug", () => {

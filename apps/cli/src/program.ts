@@ -7,6 +7,7 @@ import { writingRun, writingScore } from "./eval-writing.ts";
 import { DEFAULT_MIN_ACCURACY, filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
 import { llmPing } from "./llm-ping.ts";
+import { mapRun } from "./map.ts";
 import { research } from "./research.ts";
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
@@ -294,6 +295,69 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             minShared: Number(opts.minShared),
             allowUnconfirmed: !!opts.allowUnconfirmed,
             ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command("map")
+    .description(
+      "Steps 11-14 and 20: build the topical map (core/outer tree, intent, priority, existing pages, links)",
+    )
+    .argument("<clusters>", "clusters.json written by mycel cluster")
+    .option("--queries <file>", "queries.json for intent and CPC (default: next to clusters)")
+    .option("--context <file>", "the confirmed context (default: context.json next to clusters)")
+    .option(
+      "--pages <file>",
+      "existing pages: pages.json or research.json (default: research.json next to clusters)",
+    )
+    .option("--expect <file>", "a test client's expectations.json: check the map against it")
+    .option("--out <file>", "where to write the map (default: topical-map.json next to clusters)")
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        clustersFile: string,
+        opts: {
+          queries?: string;
+          context?: string;
+          pages?: string;
+          expect?: string;
+          out?: string;
+          provider: string;
+          model: string;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof mapRun>>;
+        try {
+          res = await mapRun({
+            runsDir,
+            clustersFile,
+            provider: opts.provider,
+            model: opts.model,
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.queries ? { queriesFile: opts.queries } : {}),
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.pages ? { pagesFile: opts.pages } : {}),
+            ...(opts.expect ? { expectFile: opts.expect } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
           });
