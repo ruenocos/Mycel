@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CliOutput } from "@mycel/schema";
+import { CliOutput, MAP_TARGETS } from "@mycel/schema";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mapRun } from "./map.ts";
 import { buildProgram, leafCommands, runCli } from "./program.ts";
@@ -352,9 +352,13 @@ describe("mycel --json", () => {
       error: { code: "BELOW_PASS_MARK", transient: false },
     });
     const missed = (output.data as { missed: string[] }).missed;
+    // Counted from the schema: a round that adds a target doesn't break this test.
+    const targets = Object.values(MAP_TARGETS).filter(
+      (t) => t.max !== undefined || t.min !== undefined,
+    ).length;
     expect(missed.length).toBeGreaterThan(0);
     expect(output.error?.message).toBe(
-      `the map misses ${missed.length} of 7 targets: ${missed.join(", ")}`,
+      `the map misses ${missed.length} of ${targets} targets: ${missed.join(", ")}`,
     );
   });
 

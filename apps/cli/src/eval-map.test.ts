@@ -106,7 +106,7 @@ describe("mycel eval map", () => {
     // is a missed mark: exit code 10, so the eval can gate a change.
     expect(res.ok).toBe(false);
     expect(describeError(res.failure)).toMatchObject({ code: "BELOW_PASS_MARK" });
-    expect(describeError(res.failure).message).toMatch(/^the map misses \d of 7 targets: /);
+    expect(describeError(res.failure).message).toMatch(/^the map misses \d+ of \d+ targets: /);
     expect(describeError(res.failure).message).toContain("duplicateIntentPairs");
     expect(summarizeRun(join(dir, "runs"), res.runId).status).toBe("ok");
     const e = MapEval.parse(JSON.parse(readFileSync(res.out as string, "utf8")));
