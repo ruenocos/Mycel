@@ -3,13 +3,22 @@ import type {
   LeftOut,
   MapNode,
   MapSection,
+  MenuGroup,
   SiteMaps,
+  SiteSection,
   TopicalMap,
 } from "@mycel/schema";
 import { planActions } from "./actions.ts";
 import { linkPlan } from "./links.ts";
 import type { Intent, MapPlan, NodeDraft, NodeLabel } from "./plan.ts";
 import { CONTENT_KINDS, FOLD, HUB_KINDS, SKIP_KINDS } from "./rules.ts";
+import {
+  assignSections,
+  type SiteSectionsResult,
+  sectionFolder,
+  siteSections,
+  TOP_LEVEL,
+} from "./sections.ts";
 import { isHome, isWordMatch, matchPages, type PageRef, pageTitle, scorePages } from "./site.ts";
 import { proposeUrls } from "./urls.ts";
 
@@ -101,6 +110,9 @@ export interface FinishInput {
   pageAlso?: Map<string, string>;
   /** Per entity: theme hubs the model proposed and the pages that move under a hub (group.ts). */
   groups?: Map<string, { themes: NodeDraft[]; parents: Map<string, string> }>;
+  /** The site's sections and menu groups as the reader found them (issue #51). */
+  sections?: SiteSection[];
+  menu?: MenuGroup[];
   runId: string;
   createdAt: string;
   costUsd: number;
@@ -113,15 +125,41 @@ export function finishMaps(input: FinishInput): SiteMaps {
   const pageList = input.pages ?? [];
   const maps: TopicalMap[] = [];
   const onMap = new Set<string>();
+  const site = siteSections({
+    pages: pageList,
+    sections: input.sections ?? [],
+    menu: input.menu ?? [],
+    ...(ctx.business ? { business: ctx.business } : {}),
+    language: ctx.market.language,
+  });
+  const suggested = new Map<string, SiteSection>();
+  const used = new Set<string>();
   for (const { entity, nodes } of plan.entities) {
-    const { map, linkedUrls } = finishOne(input, entity, nodes, pageList);
+    const { map, linkedUrls, sections } = finishOne(input, entity, nodes, pageList, site);
     for (const url of linkedUrls) onMap.add(url);
+    for (const s of sections.suggested) suggested.set(s.key, s);
+    for (const k of sections.used) used.add(k);
     maps.push(map);
   }
   const outside = pageList
     .filter((p) => !isHome(p) && !SKIP_KINDS.has(p.kind) && !onMap.has(p.url))
     .map((p) => ({ url: p.url, kind: p.kind, title: pageTitle(p, ctx.site.name) }));
-  return { site: ctx.site.url, maps, outside };
+  const siteSectionList = [
+    ...site.sections,
+    ...(used.has(TOP_LEVEL) && !site.sections.some((s) => s.key === TOP_LEVEL)
+      ? [
+          {
+            key: TOP_LEVEL,
+            name: "Top level",
+            folder: "/",
+            source: "folder" as const,
+            categories: [],
+          },
+        ]
+      : []),
+    ...[...suggested.values()].map((s) => ({ ...s, suggested: true })),
+  ];
+  return { site: ctx.site.url, maps, siteSections: siteSectionList, outside };
 }
 
 function finishOne(
@@ -129,7 +167,12 @@ function finishOne(
   entity: string,
   drafts: NodeDraft[],
   pageList: PageRef[],
-): { map: TopicalMap; linkedUrls: string[] } {
+  site: SiteSectionsResult,
+): {
+  map: TopicalMap;
+  linkedUrls: string[];
+  sections: { suggested: SiteSection[]; used: Set<string> };
+} {
   const { labels } = input;
   const ctx = input.plan.context;
   const root = drafts[0] as NodeDraft;
@@ -300,9 +343,40 @@ function finishOne(
     if (name) n.name = name;
   }
 
+  // Site sections (issue #51): every page gets one; a new page's URL uses its folder.
+  const placed = assignSections({
+    nodes: all.map((n) => {
+      const top = pagesOf(n)[0];
+      return {
+        id: n.id,
+        isRoot: n.isRoot,
+        tier: n.section,
+        intent: n.intent.main,
+        mainQuery: n.mainQuery,
+        ...(n.name ? { name: n.name } : {}),
+        ...(n.hub ? { hub: n.hub } : {}),
+        ...(n.offeringId ? { offeringId: n.offeringId } : {}),
+        ...(top ? { existing: top.url } : {}),
+      };
+    }),
+    parent,
+    site,
+    ...(ctx.business ? { business: ctx.business } : {}),
+    language: ctx.market.language,
+    ...(ctx.market.city ? { city: ctx.market.city } : {}),
+  });
+  const sectionList = [...site.sections, ...placed.suggested];
+  const sectionOf = (id: string) => {
+    const at = placed.of.get(id);
+    const s = at ? sectionList.find((x) => x.key === at.key) : undefined;
+    return { at, s };
+  };
   const urlOf = proposeUrls({
     nodes: all.map((n) => {
       const top = pagesOf(n)[0];
+      const { at, s } = sectionOf(n.id);
+      // A suggested section has no folder yet: its pages keep the old URL rules.
+      const folder = at && !at.suggested ? (sectionFolder(s, at.category) ?? "/") : undefined;
       return {
         id: n.id,
         isRoot: n.isRoot,
@@ -310,6 +384,7 @@ function finishOne(
         informational: n.intent.main === "informational",
         mainQuery: n.mainQuery,
         ...(top ? { existing: top.url } : {}),
+        ...(folder !== undefined ? { folder } : {}),
       };
     }),
     parent,
@@ -329,6 +404,20 @@ function finishOne(
       cur = up ? draftOf.get(up) : undefined;
     }
     return undefined;
+  };
+  const siteSectionOf = (id: string): Pick<MapNode, "siteSection"> => {
+    const { at, s } = sectionOf(id);
+    if (!at) return {};
+    return {
+      siteSection: {
+        key: at.key,
+        name: s?.name ?? "Top level",
+        ...(s?.role ? { role: s.role } : {}),
+        ...(at.category ? { category: at.category } : {}),
+        ...(at.suggested ? { suggested: true } : {}),
+        why: at.why,
+      },
+    };
   };
   const mapNodes: MapNode[] = all.map((n) => {
     const offeringId = n.isRoot ? undefined : offeringOf(n);
@@ -367,6 +456,7 @@ function finishOne(
       action: act.action,
       ...(act.wave ? { wave: act.wave } : {}),
       flags: { quality: quality.has(n.id), trending: false },
+      ...siteSectionOf(n.id),
       linksOut: linksOf(n),
       aiOverview: n.aiOverview,
       status: statusOf(n),
@@ -390,5 +480,11 @@ function finishOne(
       leftOut,
     },
     linkedUrls: [...linked.values()].flat(),
+    sections: {
+      suggested: placed.suggested.filter((s) =>
+        [...placed.of.values()].some((v) => v.key === s.key),
+      ),
+      used: new Set([...placed.of.values()].map((v) => v.key)),
+    },
   };
 }

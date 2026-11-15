@@ -25,6 +25,8 @@ export const MAP_METRICS = [
   "existingWithJob",
   "newPages",
   "claimFailures",
+  "pagesWithoutSection",
+  "newOutsideSectionFolder",
 ] as const;
 export type MapMetricId = (typeof MAP_METRICS)[number];
 
@@ -38,6 +40,11 @@ export const MAP_TARGETS: Record<MapMetricId, { max?: number; min?: number; labe
   existingWithJob: { min: 0.9, label: "share of existing pages with a job" },
   newPages: { label: "new pages (target: half of round 7.1 or fewer)" },
   claimFailures: { max: 0, label: "failed fact checks in names and why-texts" },
+  pagesWithoutSection: { max: 0, label: "pages without a site section (issue #51)" },
+  newOutsideSectionFolder: {
+    max: 0,
+    label: "new pages whose URL is outside their section's folder",
+  },
 };
 
 export const MapEval = z.object({

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CentralEntity } from "./context.ts";
+import { SectionRole, SiteSection } from "./site.ts";
 
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
 export const LinkOut = z.object({
@@ -101,6 +102,21 @@ export const MapNode = z.object({
   /** In the first plan, or later. Absent for pages to keep as they are. */
   wave: z.enum(["now", "later"]).optional(),
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
+  /**
+   * The site section the page lives in (issue #51): its page type, template and URL folder.
+   * `suggested` marks a section the site doesn't have yet.
+   */
+  siteSection: z
+    .object({
+      key: z.string().min(1),
+      name: z.string().min(1),
+      role: SectionRole.optional(),
+      category: z.string().min(1).optional(),
+      suggested: z.boolean().optional(),
+      /** The rule that placed it, for people ("existing page", "question page"). */
+      why: z.string().min(1),
+    })
+    .optional(),
   linksOut: z.array(LinkOut).default([]),
   /** Null when no SERP was fetched for this node. */
   aiOverview: z.object({ present: z.boolean(), cited: z.boolean() }).nullable(),
@@ -195,6 +211,8 @@ export type TopicalMap = z.infer<typeof TopicalMap>;
 export const SiteMaps = z.object({
   site: z.string().min(1),
   maps: z.array(TopicalMap).min(1),
+  /** The site's sections with their roles, suggested ones included (issue #51). */
+  siteSections: z.array(SiteSection.extend({ suggested: z.boolean().optional() })).optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z
     .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))

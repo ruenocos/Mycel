@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SectionRole } from "./site.ts";
 
 /**
  * The business profile (issue #42, step 1; Koray steps 1-6 made specific). AI fills every field it
@@ -114,6 +115,20 @@ export const BusinessProfile = z.object({
     .default({ own: [], neverTarget: [], avoidWords: [] }),
   /** How the site names things ("behandelingen", "kennisbank"): names, folders and URLs follow it. */
   siteTerms: z.array(z.object({ term: z.string().min(1), meaning: z.string().min(1) })).default([]),
+  /**
+   * The owner's word on the site's sections (issue #51): the role of a section by its key or
+   * folder, a new display name, or "ignore" for a section that isn't used (a test post type).
+   */
+  siteSections: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        role: SectionRole.optional(),
+        name: z.string().min(1).optional(),
+        ignore: z.boolean().default(false),
+      }),
+    )
+    .optional(),
   /** Questions for the owner that AI could not settle (e.g. "Do you offer X?", from competitors). */
   openQuestions: z.array(z.string().min(1)).default([]),
   confirmed: z.object({ by: z.string().min(1), at: z.iso.datetime() }).optional(),

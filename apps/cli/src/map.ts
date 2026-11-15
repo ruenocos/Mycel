@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { FakeProvider, LlmClient, type LlmProvider, OllamaProvider } from "@mycel/connectors";
+import {
+  FakeProvider,
+  LlmClient,
+  type LlmProvider,
+  OllamaProvider,
+  WordPressClient,
+} from "@mycel/connectors";
 import {
   CORE_VERSION,
   checkGate,
@@ -17,7 +23,9 @@ import {
   ClusterSet,
   FilteredQueries,
   GateExpectations,
+  MenuGroup,
   type SiteMaps,
+  SiteSection,
 } from "@mycel/schema";
 import { z } from "zod";
 import { readProfile } from "./business.ts";
@@ -73,11 +81,30 @@ const CLUSTERS_FILE = { name: "clusters file", writtenBy: "mycel cluster" };
 const PAGES_SOURCE = { name: "pages or research file", writtenBy: "mycel research" };
 const EXPECTATIONS = { name: "expectations file", writtenBy: "hand, in a fixture folder" };
 
-/** Pages from a pages.json (fixture or WordPress read) or a research.json. */
-function readPages(path: string): PageRef[] {
-  return readInput(path, z.object({ pages: z.array(z.unknown()) }), PAGES_SOURCE)
-    .pages as PageRef[];
+interface SiteRead {
+  pages: PageRef[];
+  sections: SiteSection[];
+  menu: MenuGroup[];
 }
+
+/**
+ * Pages from a pages.json (fixture or WordPress read) or a research.json, with the site's
+ * sections and menu groups when the file has them (issue #51).
+ */
+function readPages(path: string): SiteRead {
+  const read = readInput(
+    path,
+    z.object({
+      pages: z.array(z.unknown()),
+      sections: z.array(SiteSection).default([]),
+      menu: z.array(MenuGroup).default([]),
+    }),
+    PAGES_SOURCE,
+  );
+  return { pages: read.pages as PageRef[], sections: read.sections, menu: read.menu };
+}
+
+const isUrl = (s: string) => /^https?:\/\//i.test(s);
 
 export function summarizeMaps(d: SiteMaps): string[] {
   const lines: string[] = [];
@@ -173,7 +200,9 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
   const pagesFile =
     opts.pagesFile ??
     (existsSync(join(dir, "research.json")) ? join(dir, "research.json") : undefined);
-  const pages = pagesFile ? readPages(pagesFile) : [];
+  // A site URL is read live over the public WordPress API (free, cached) inside the run.
+  const siteRead: SiteRead =
+    pagesFile && !isUrl(pagesFile) ? readPages(pagesFile) : { pages: [], sections: [], menu: [] };
   const expectations = opts.expectFile
     ? readInput(opts.expectFile, GateExpectations, EXPECTATIONS)
     : undefined;
@@ -213,11 +242,26 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
           allowLiveSerp: false,
         })
       : undefined;
+    const site =
+      pagesFile && isUrl(pagesFile)
+        ? await run.step("site-sections", async (ctx) => {
+            const wp = new WordPressClient({
+              baseUrl: new URL(pagesFile).origin,
+              cacheDir: join(opts.cacheDir ?? ".cache", "wordpress"),
+            });
+            return wp.readSite(ctx);
+          })
+        : siteRead;
+    lines.push(
+      `sections    ${site.sections.length ? site.sections.map((x) => x.name).join(", ") : "from URL folders"}`,
+    );
     const result = await runStep(run, mapStep(llm, serps), {
       context,
       clusters,
       queries,
-      pages,
+      pages: site.pages,
+      sections: site.sections,
+      menu: site.menu,
       model: opts.model,
     });
     out = opts.out ?? join(dir, "topical-map.json");

@@ -1,4 +1,12 @@
-import { ClientContext, ClusterSet, FilteredQuery, SiteMaps, SitePage } from "@mycel/schema";
+import {
+  ClientContext,
+  ClusterSet,
+  FilteredQuery,
+  MenuGroup,
+  SiteMaps,
+  SitePage,
+  SiteSection,
+} from "@mycel/schema";
 import { z } from "zod";
 import type { ClusterSerp, SerpBatchPort } from "../cluster/cluster.ts";
 import type { JsonModel } from "../context/llm.ts";
@@ -59,8 +67,11 @@ import { anchorSiteHubs } from "./site.ts";
  * 9: business-first (issue #42): offering skeleton and hard offer gate (attach.ts), one page
  *    per intent by SERP overlap (intent.ts), offering hubs locked under the root, the model names
  *    the offering of pages the words leave open (map-label v8), offeringId on every node.
+ * 10: site sections (issue #51): every page gets the site section it lives in (WordPress post
+ *    type, menu group or URL folder, with a role), new pages' URLs use that section's folder, and
+ *    the map lists the site's sections, suggested ones included.
  */
-export const MAP_STEP_VERSION = "9";
+export const MAP_STEP_VERSION = "10";
 
 export const MapInput = z.object({
   context: ClientContext,
@@ -68,7 +79,21 @@ export const MapInput = z.object({
   /** Kept queries from the filter: intent and CPC per query. Optional; without them intent falls back to the tier. */
   queries: z.array(FilteredQuery).default([]),
   /** The client's existing pages, to link nodes and flag cannibalisation. */
-  pages: z.array(SitePage.pick({ url: true, kind: true, title: true, h1: true })).default([]),
+  pages: z
+    .array(
+      SitePage.pick({
+        url: true,
+        kind: true,
+        title: true,
+        h1: true,
+        section: true,
+        category: true,
+      }),
+    )
+    .default([]),
+  /** The site's sections and menu groups, when the pages came from a reader that knows them. */
+  sections: z.array(SiteSection).default([]),
+  menu: z.array(MenuGroup).default([]),
   model: z.string().min(1),
   /** 15 keeps one call well under the provider timeout when several maps run at once. */
   batchSize: z.number().int().positive().default(15),
@@ -206,6 +231,8 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
         pages,
         pageLinks: site.links,
         pageAlso: linked.also,
+        sections: input.sections,
+        menu: input.menu,
         runId: ctx.runId,
         createdAt: new Date().toISOString(),
         costUsd: 0,

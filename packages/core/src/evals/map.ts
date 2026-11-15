@@ -162,6 +162,18 @@ export function evalMap(input: MapEvalInput): MapEval {
   const jobless = linkable.filter((p) => !used.has(p.url));
   const share = linkable.length ? (linkable.length - jobless.length) / linkable.length : null;
 
+  // 7. Site sections (issue #51): every page has one; a new page's URL sits in its folder.
+  const sectionList = maps.siteSections;
+  const unsectioned = real.filter((n) => !n.siteSection);
+  const folderOf = (key: string) => sectionList?.find((s) => s.key === key)?.folder;
+  const misfiled = creates.filter((n) => {
+    const s = n.siteSection;
+    if (!s || s.suggested) return false;
+    const f = folderOf(s.key);
+    return f !== undefined && !n.proposedUrl.startsWith(f);
+  });
+  const noSections = { note: "map made before site sections" };
+
   const count = (xs: Node[], key: (n: Node) => string | undefined) => {
     const out: Record<string, number> = {};
     for (const n of xs) {
@@ -207,6 +219,16 @@ export function evalMap(input: MapEvalInput): MapEval {
       ),
       newPages: metric(creates.length, []),
       claimFailures: metric(null, [], { note: "measured from step 7 (fact check)" }),
+      pagesWithoutSection: metric(
+        sectionList ? unsectioned.length : null,
+        unsectioned.map(label),
+        sectionList ? { of: real.length } : noSections,
+      ),
+      newOutsideSectionFolder: metric(
+        sectionList ? misfiled.length : null,
+        misfiled.map((n) => `${n.proposedUrl} (${n.siteSection?.name})`),
+        sectionList ? { of: creates.length } : noSections,
+      ),
     },
   });
 }

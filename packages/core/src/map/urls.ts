@@ -1,9 +1,11 @@
 import { CONTENT_KINDS, MAX_SLUG } from "./rules.ts";
 
 /**
- * Proposed URLs (Koray step 16). An existing page keeps its URL. A new page follows the site's own
- * folders: the folder its sibling pages already share, the site's article folder for a question
- * page, else under its hub's path, else flat.
+ * Proposed URLs (Koray step 16). An existing page keeps its URL. A new page with a site section
+ * (issue #51) lives in that section's folder: next to its siblings or under its hub when they sit
+ * in that folder too (articles never nest under an article), else straight in it. Without a section it follows the site's own folders:
+ * the folder its sibling pages share, the article folder for a question page, else under its
+ * hub's path, else flat.
  */
 
 /** ASCII slug: diacritics stripped, words joined by hyphens, cut at a word, never inside one. */
@@ -45,6 +47,8 @@ export interface UrlNode {
   mainQuery: string;
   /** The existing page that serves this node, if any. */
   existing?: string;
+  /** The folder of the node's site section ("/kennisbank/", "/" for root-level sections). */
+  folder?: string;
 }
 
 export function proposeUrls(input: {
@@ -101,15 +105,30 @@ export function proposeUrls(input: {
       2,
     );
     const hubUrl = p && p !== root?.id ? urlOf.get(p) : undefined;
+    // Under the hub's path: two folders deep at most, under a deeper hub its last segment.
+    const underHub = (hub: string) => {
+      const parts = hub.split("/").filter(Boolean);
+      return `/${parts.length <= 2 ? parts.join("/") : parts.at(-1)}/${slug}/`;
+    };
     let url: string;
-    if (siblingFolder) url = `${siblingFolder}${slug}/`;
+    if (n.folder !== undefined) {
+      const f = n.folder;
+      const inside = (u: string) => u.startsWith(f);
+      if (siblingFolder && inside(siblingFolder)) url = `${siblingFolder}${slug}/`;
+      else if (
+        hubUrl &&
+        hubUrl !== "/" &&
+        n.section === "outer" &&
+        !n.informational &&
+        inside(underHub(hubUrl))
+      )
+        url = underHub(hubUrl);
+      else url = `${f}${slug}/`;
+    } else if (siblingFolder) url = `${siblingFolder}${slug}/`;
     else if (n.informational && n.section === "outer" && articleFolder)
       url = `${articleFolder}${slug}/`;
-    else if (hubUrl && hubUrl !== "/" && n.section === "outer") {
-      // Two folders deep at most: under a deeper hub, use its last segment as the folder.
-      const parts = hubUrl.split("/").filter(Boolean);
-      url = `/${parts.length <= 2 ? parts.join("/") : parts.at(-1)}/${slug}/`;
-    } else url = `/${slug}/`;
+    else if (hubUrl && hubUrl !== "/" && n.section === "outer") url = underHub(hubUrl);
+    else url = `/${slug}/`;
     urlOf.set(n.id, unique(url));
   }
   return urlOf;

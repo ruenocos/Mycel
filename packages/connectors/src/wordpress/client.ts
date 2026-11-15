@@ -1,4 +1,4 @@
-import type { SitePage, SitePages } from "@mycel/schema";
+import type { MenuGroup, SitePage, SitePages, SiteSection } from "@mycel/schema";
 import { FileCache, requestHash } from "../dataforseo/cache.ts";
 import { withUserAgent } from "../http.ts";
 import type { CallRecorder } from "../recorder.ts";
@@ -36,6 +36,8 @@ export class WordPressError extends Error {
 
 interface WpType {
   slug: string;
+  /** Plural label in the site's language ("Oplossingen", "Berichten"). */
+  name?: string;
   rest_base?: string;
   rest_namespace?: string;
 }
@@ -48,6 +50,7 @@ interface WpItem {
   title?: { rendered?: string };
   content?: { rendered?: string };
   excerpt?: { rendered?: string };
+  categories?: number[];
   yoast_head_json?: {
     title?: string;
     description?: string;
@@ -102,12 +105,72 @@ function firstH1(html: string): string | undefined {
   return text || undefined;
 }
 
+/** The folder a page sits in: "/a/b/" → "/a/", "/a/" → "/". */
+export function folderOf(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 1 ? `/${parts.slice(0, -1).join("/")}/` : "/";
+}
+
+/** The deepest folder all paths share ("/kennisbank/ai/x/", "/kennisbank/bc/y/" → "/kennisbank/"). */
+export function commonFolder(paths: string[]): string {
+  const folders = paths.map((p) => folderOf(p).split("/").filter(Boolean));
+  const [first = []] = folders;
+  let n = 0;
+  while (n < first.length && folders.every((f) => f[n] === first[n])) n++;
+  return n ? `/${first.slice(0, n).join("/")}/` : "/";
+}
+
+/**
+ * Main-menu groups from a page's HTML: each menu item with a sub-menu (WordPress and Elementor
+ * mark them "menu-item-has-children") gives its label and the same-site paths under it. A menu
+ * printed twice (desktop and mobile) gives each group once.
+ */
+export function readMenu(html: string, base: string): MenuGroup[] {
+  const origin = new URL(base).origin;
+  const groups = new Map<string, Set<string>>();
+  const open = /<li\b[^>]*class="[^"]*\bmenu-item-has-children\b[^"]*"[^>]*>/gi;
+  for (let m = open.exec(html); m; m = open.exec(html)) {
+    const rest = html.slice(m.index + m[0].length);
+    const label = /<a\b[^>]*>([\s\S]*?)<\/a>/i.exec(rest);
+    const sub = /<ul\b[^>]*class="[^"]*\bsub-menu\b[^"]*"[^>]*>/i.exec(rest);
+    if (!label?.[1] || !sub) continue;
+    // The sub-menu runs to its own closing tag; nested lists count.
+    let depth = 1;
+    let end = sub.index + sub[0].length;
+    const tag = /<(\/?)ul\b[^>]*>/gi;
+    tag.lastIndex = end;
+    for (let t = tag.exec(rest); t && depth > 0; t = tag.exec(rest)) {
+      depth += t[1] ? -1 : 1;
+      end = t.index;
+    }
+    const name = htmlToText(label[1]);
+    if (!name) continue;
+    const urls = groups.get(name) ?? new Set<string>();
+    for (const h of rest.slice(sub.index, end).matchAll(/href="([^"#]+)"/gi)) {
+      const href = decodeEntities(h[1] as string);
+      if (!URL.canParse(href, origin)) continue;
+      const u = new URL(href, origin);
+      if (u.origin === origin && u.pathname !== "/")
+        urls.add(u.pathname.endsWith("/") ? u.pathname : `${u.pathname}/`);
+    }
+    if (urls.size) groups.set(name, urls);
+  }
+  return [...groups].map(([label, urls]) => ({ label, urls: [...urls] }));
+}
+
 /** Generic kind from structure only (no client words): root is home, posts are blog. */
 export function kindOf(type: string, path: string): SitePage["kind"] {
   if (path === "/") return "home";
   if (type === "post") return "blog";
   return "other";
 }
+
+/** A post type slug as a section key: lowercase letters, digits and hyphens. */
+const sectionKey = (slug: string) =>
+  slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "section";
 
 export class WordPressClient {
   private readonly base: string;
@@ -128,22 +191,83 @@ export class WordPressClient {
     return { language: m[1].toLowerCase(), ...(m[2] ? { country: m[2].toUpperCase() } : {}) };
   }
 
-  /** All indexable content of the site as SitePages. Noindex pages are skipped. */
+  /**
+   * All indexable content of the site as SitePages. Noindex pages are skipped. Every page keeps
+   * its post type as its section (issue #51), posts their first category, and the home page's
+   * menu groups come along for sections that have no folder.
+   */
   async readSite(rec: CallRecorder): Promise<SitePages> {
     const types = await this.contentTypes(rec);
+    let categories = new Map<number, string>();
+    if (types.some((t) => t.slug === "post")) {
+      try {
+        categories = await this.categories(rec);
+      } catch (err) {
+        rec.log.warn("wordpress: post categories not read", { error: (err as Error).message });
+      }
+    }
     const pages: SitePage[] = [];
+    const sections: SiteSection[] = [];
     const seen = new Set<string>();
     for (const t of types) {
+      const own: SitePage[] = [];
       for (const item of await this.items(t, rec)) {
         if (item.yoast_head_json?.robots?.index === "noindex") continue;
         const page = this.toPage(item);
         if (!page || seen.has(page.url)) continue;
         seen.add(page.url);
-        pages.push(page);
+        const category = categories.get(item.categories?.[0] ?? -1);
+        own.push({ ...page, section: sectionKey(t.slug), ...(category ? { category } : {}) });
       }
+      if (!own.length) continue;
+      pages.push(...own);
+      const folder = commonFolder(own.map((p) => p.url));
+      const byCategory = new Map<string, string[]>();
+      for (const p of own)
+        if (p.category) byCategory.set(p.category, [...(byCategory.get(p.category) ?? []), p.url]);
+      // A section with its own folder goes by the folder's words, which visitors see in the URL
+      // and the menu ("Kennisbank"), not the post type's admin label ("Berichten").
+      const seg = folder.split("/").filter(Boolean)[0];
+      const label = decodeEntities(t.name ?? "").trim() || t.slug;
+      sections.push({
+        key: sectionKey(t.slug),
+        name: seg ? seg.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()) : label,
+        folder,
+        source: "post_type",
+        categories: [...byCategory].map(([name, urls]) => {
+          const f = commonFolder(urls);
+          return { name, ...(f.length > folder.length ? { folder: f } : {}) };
+        }),
+      });
     }
-    rec.log.debug("wordpress site read", { types: types.map((t) => t.slug), pages: pages.length });
-    return { site: this.base, source: "wordpress", pages };
+    let menu: MenuGroup[] = [];
+    try {
+      const { body } = await this.get(`${this.base}/`, rec, "text");
+      menu = readMenu(String(body), this.base);
+    } catch (err) {
+      rec.log.warn("wordpress: home page menu not read", { error: (err as Error).message });
+    }
+    rec.log.debug("wordpress site read", {
+      types: types.map((t) => t.slug),
+      pages: pages.length,
+      sections: sections.map((s) => `${s.key} ${s.folder}`),
+      menuGroups: menu.map((g) => `${g.label} (${g.urls.length})`),
+    });
+    return { site: this.base, source: "wordpress", pages, sections, menu };
+  }
+
+  /** Post categories by id, in the site's words. */
+  private async categories(rec: CallRecorder): Promise<Map<number, string>> {
+    const out = new Map<number, string>();
+    for (let page = 1; page <= 10; page++) {
+      const url = `${this.base}/wp-json/wp/v2/categories?per_page=100&page=${page}&_fields=id,name`;
+      const { body, totalPages } = await this.get(url, rec, "json");
+      if (!Array.isArray(body)) break;
+      for (const c of body as { id: number; name?: string }[])
+        if (c.name) out.set(c.id, decodeEntities(c.name).trim());
+      if (page >= (totalPages ?? 1) || body.length === 0) break;
+    }
+    return out;
   }
 
   private async contentTypes(rec: CallRecorder): Promise<WpType[]> {
@@ -159,7 +283,7 @@ export class WordPressClient {
   }
 
   private async items(type: WpType, rec: CallRecorder): Promise<WpItem[]> {
-    const fields = "id,type,slug,link,title,content,excerpt,yoast_head_json";
+    const fields = "id,type,slug,link,title,content,excerpt,categories,yoast_head_json";
     const out: WpItem[] = [];
     const max = this.opts.maxPerType ?? 500;
     for (let page = 1; out.length < max; page++) {

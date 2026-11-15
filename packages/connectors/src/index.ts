@@ -52,9 +52,12 @@ export {
   nullRecorder,
 } from "./recorder.ts";
 export {
+  commonFolder,
   decodeEntities,
+  folderOf,
   htmlToText,
   kindOf,
+  readMenu,
   WordPressClient,
   WordPressError,
   type WordPressOptions,
