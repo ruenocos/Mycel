@@ -1,4 +1,6 @@
-export const CONNECTORS_VERSION = "0.0.0";
+import pkg from "../package.json" with { type: "json" };
+
+export const CONNECTORS_VERSION: string = pkg.version;
 
 /**
  * Who is calling. Every connector sends this, so a server (an API, a client's own site) sees

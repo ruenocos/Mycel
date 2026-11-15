@@ -1,12 +1,31 @@
 {
-  "name": "@mycel/schema",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@ruenocos/mycel-schema",
+  "version": "0.1.0",
+  "description": "Mycel engine: Zod schemas, the step contract and the CLI output contract.",
+  "license": "UNLICENSED",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ruenocos/Mycel",
+    "directory": "packages/schema"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      }
+    }
+  },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

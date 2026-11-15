@@ -8,15 +8,20 @@
   },
   "scripts": {
     "mycel": "tsx apps/cli/src/index.ts",
+    "build": "pnpm -r --filter \"./packages/*\" build",
     "typecheck": "pnpm -r typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm lint && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.7",
+    "@changesets/cli": "^3.0.3",
     "@types/node": "^22.20.5",
+    "tsdown": "^0.23.7",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vitest": "^3.2.7"

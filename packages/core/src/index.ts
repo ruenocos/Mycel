@@ -1,4 +1,6 @@
 /** All SEO logic lives in core; apps are thin shells around it (ADR 0001). */
+import pkg from "../package.json" with { type: "json" };
+
 export { SCHEMA_VERSION } from "@mycel/schema";
 export * from "./cluster/index.ts";
 export * from "./context/index.ts";
@@ -12,4 +14,5 @@ export * from "./pipeline/status.ts";
 export * from "./research/index.ts";
 export * from "./step.ts";
 
-export const CORE_VERSION = "0.0.0";
+/** The engine version (ADR 0018): one version for every engine package, read from package.json. */
+export const CORE_VERSION: string = pkg.version;
