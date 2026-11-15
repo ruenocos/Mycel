@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOwnerAnswers,
   type BusinessProposal,
+  BusinessProposal as BusinessProposalSchema,
   buildBusinessEvidence,
   buildBusinessMessages,
   scoreProfile,
@@ -145,6 +146,47 @@ describe("business profile", () => {
       "huisbezoeken",
     ]);
     expect(done.openQuestions).toEqual([]);
+  });
+
+  it("accepts answers the model wraps in objects", () => {
+    const raw = {
+      offerings: [
+        {
+          name: "fysiotherapie",
+          kind: "service",
+          subOfferings: [{ name: "manuele therapie" }, "  "],
+          evidence: ["page:/fysiotherapie/"],
+        },
+      ],
+      openQuestions: [
+        { question: 'Do you offer "kaakfysiotherapie"?', evidence: ["competitor:x"] },
+        "Do you work evenings?",
+      ],
+    };
+    const parsed = BusinessProposalSchema.parse(raw);
+    expect(parsed.openQuestions).toEqual([
+      'Do you offer "kaakfysiotherapie"?',
+      "Do you work evenings?",
+    ]);
+    expect(parsed.offerings[0]?.subOfferings).toEqual(["manuele therapie"]);
+  });
+
+  it("merging the owner's answers doesn't repeat what the proposal already has", () => {
+    const { profile } = toBusinessProfile(proposal(), evidence, ctx);
+    const done = applyOwnerAnswers(profile, {
+      by: "Wons",
+      at: "2026-11-15T10:00:00.000Z",
+      notOffered: [{ name: "Kinderfysiotherapie", aliases: ["kinderfysio"] }],
+      places: { serves: ["Utrecht", "utrecht ", "Zeist"] },
+      facts: ["Opgericht in 2012", "opgericht in 2012"],
+    });
+    expect(done.notOffered.map((n) => [n.name, n.aliases])).toEqual([
+      ["kinderfysiotherapie", ["kinderfysio"]],
+    ]);
+    expect(done.places.serves).toEqual(["Utrecht", "Zeist"]);
+    expect(done.facts.map((f) => f.fact).filter((f) => /2012/.test(f))).toEqual([
+      "Opgericht in 2012",
+    ]);
   });
 
   it("scores against the answer key, and a simulated owner closes the gap", () => {

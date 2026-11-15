@@ -88,11 +88,15 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
 }
 
 export function profileLines(p: BusinessProfile): string[] {
+  const named = new Set(
+    p.places.locations.flatMap((l) => [l.name, l.city]).map((s) => s.toLowerCase()),
+  );
+  const serves = p.places.serves.filter((s) => !named.has(s.toLowerCase()));
   const lines = [
     `offerings   ${p.offerings.length}: ${p.offerings.map((o) => `${o.name}${o.value === "top" ? " (top)" : ""}`).join(", ")}`,
     `specific    ${Math.round((p.offerings.reduce((s, o) => s + specificity(o), 0) / p.offerings.length) * 100)}% of offering fields filled; ${p.offerings.reduce((s, o) => s + o.unknown.length, 0)} unknown fields to ask`,
     `not offered ${p.notOffered.map((n) => n.name).join(", ") || "none found"}`,
-    `places      ${[...p.places.locations.map((l) => `${l.name} (${l.city})`), ...p.places.serves].join(", ") || (p.places.nationwide ? "nationwide" : "none found")}`,
+    `places      ${[...p.places.locations.map((l) => `${l.name} (${l.city})`), ...serves].join(", ") || (p.places.nationwide ? "nationwide" : "none found")}`,
     `facts       ${p.facts.length} facts, ${p.differentiators.length} differentiators`,
   ];
   if (p.openQuestions.length) lines.push(`ask         ${p.openQuestions.join(" ")}`);

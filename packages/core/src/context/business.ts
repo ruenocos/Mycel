@@ -24,7 +24,7 @@ import type { JsonModel } from "./llm.ts";
  * search evidence comes from the research dataset that is already on disk.
  */
 
-export const BUSINESS_TEMPLATE = { id: "business-propose", version: "1" } as const;
+export const BUSINESS_TEMPLATE = { id: "business-propose", version: "2" } as const;
 
 /** Kinds whose body text says what the business offers, in reading order. */
 const OFFER_KINDS = [
@@ -126,6 +126,20 @@ export function buildBusinessEvidence(
 
 const ev = z.array(z.string()).default([]);
 
+/** Models sometimes wrap a plain string in an object ({question}, {name}, {value}, {text}). */
+const loose = z.preprocess((x) => {
+  if (x && typeof x === "object" && !Array.isArray(x)) {
+    const o = x as Record<string, unknown>;
+    const s = o.question ?? o.name ?? o.value ?? o.text ?? o.place ?? o.fact;
+    return typeof s === "string" ? s : x;
+  }
+  return x;
+}, z.string());
+const strings = z
+  .array(loose)
+  .default([])
+  .transform((xs) => xs.map((x) => x.trim()).filter(Boolean));
+
 /** What the model returns; checked and turned into a BusinessProfile by code. */
 export const BusinessProposal = z.object({
   offerings: z
@@ -134,14 +148,14 @@ export const BusinessProposal = z.object({
         name: z.string().min(1),
         kind: z.enum(["service", "product_category", "product_line"]),
         page: z.string().optional(),
-        subOfferings: z.array(z.string()).default([]),
+        subOfferings: strings,
         attributes: z
           .array(z.object({ name: z.string().min(1), values: z.array(z.string().min(1)).min(1) }))
           .default([]),
-        audiences: z.array(z.string()).default([]),
-        places: z.array(z.string()).default([]),
+        audiences: strings,
+        places: strings,
         priceRange: z.string().optional(),
-        proofPoints: z.array(z.string()).default([]),
+        proofPoints: strings,
         seasonality: z.string().optional(),
         value: z.enum(["top", "normal", "side"]).default("normal"),
         evidence: ev,
@@ -149,9 +163,7 @@ export const BusinessProposal = z.object({
     )
     .min(1),
   notOffered: z
-    .array(
-      z.object({ name: z.string().min(1), aliases: z.array(z.string()).default([]), evidence: ev }),
-    )
+    .array(z.object({ name: z.string().min(1), aliases: strings, evidence: ev }))
     .default([]),
   locations: z
     .array(
@@ -171,12 +183,12 @@ export const BusinessProposal = z.object({
   facts: z.array(z.object({ fact: z.string().min(1), evidence: ev })).default([]),
   brand: z
     .object({
-      own: z.array(z.string()).default([]),
-      neverTarget: z.array(z.string()).default([]),
+      own: strings,
+      neverTarget: strings,
     })
     .default({ own: [], neverTarget: [] }),
   siteTerms: z.array(z.object({ term: z.string().min(1), meaning: z.string().min(1) })).default([]),
-  openQuestions: z.array(z.string().min(1)).default([]),
+  openQuestions: strings,
 });
 export type BusinessProposal = z.infer<typeof BusinessProposal>;
 
@@ -232,9 +244,9 @@ export function buildBusinessMessages(
     `Offerings the owner confirmed earlier, in short: ${ctx.offerings.join("; ") || "none"}`,
     "",
     "Return JSON with these keys:",
-    '{"offerings": [{"name", "kind": "service"|"product_category"|"product_line", "page": "/its-page/"?, "subOfferings": [], "attributes": [{"name", "values": []}], "audiences": [], "places": [], "priceRange"?, "proofPoints": [], "seasonality"?, "value": "top"|"normal"|"side", "evidence": [ids]}],',
-    ' "notOffered": [{"name", "aliases": [], "evidence": [ids]}], "locations": [{"name", "city", "address"?, "page"?, "evidence": [ids]}], "serves": [{"place", "evidence": [ids]}], "nationwide": bool,',
-    ' "conversion": "book"|"quote"|"buy"|"call"|"contact", "differentiators": [{"fact", "evidence": [ids]}], "facts": [{"fact", "evidence": [ids]}], "brand": {"own": [], "neverTarget": []}, "siteTerms": [{"term", "meaning"}], "openQuestions": []}',
+    '{"offerings": [{"name", "kind": "service"|"product_category"|"product_line", "page": "/its-page/"?, "subOfferings": [string], "attributes": [{"name", "values": [string]}], "audiences": [string], "places": [string], "priceRange"?, "proofPoints": [string], "seasonality"?, "value": "top"|"normal"|"side", "evidence": [ids]}],',
+    ' "notOffered": [{"name", "aliases": [string], "evidence": [ids]}], "locations": [{"name", "city", "address"?, "page"?, "evidence": [ids]}], "serves": [{"place", "evidence": [ids]}], "nationwide": bool,',
+    ' "conversion": "book"|"quote"|"buy"|"call"|"contact", "differentiators": [{"fact", "evidence": [ids]}], "facts": [{"fact", "evidence": [ids]}], "brand": {"own": [string], "neverTarget": [string]}, "siteTerms": [{"term", "meaning"}], "openQuestions": [string]}',
     "value: top only when the evidence shows it earns most (the main pages, most clicks, highest prices); side when the site barely mentions it; else normal.",
     "places: only where this offering is delivered when that differs from the whole business; nationwide: true for a webshop or a service delivered anywhere.",
     "facts: years in business, certifications, numbers of customers, prices, opening hours: only as the site states them.",
@@ -437,6 +449,22 @@ export function businessProposeStep(llm: JsonModel) {
 const owner: Source = { from: "owner", confidence: "high" };
 
 /** Merges the owner's answers into the profile. The owner's word wins; the profile is confirmed. */
+const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+const uniq = (xs: string[]) => {
+  const seen = new Set<string>();
+  return xs.filter((x) => !seen.has(norm(x)) && !!seen.add(norm(x)));
+};
+/** Keeps the first item per key (case and spacing ignored), folding later duplicates into it. */
+function dedupeBy<T>(xs: T[], key: (x: T) => string, fold: (keep: T, dup: T) => T): T[] {
+  const out = new Map<string, T>();
+  for (const x of xs) {
+    const k = norm(key(x));
+    const had = out.get(k);
+    out.set(k, had ? fold(had, x) : x);
+  }
+  return [...out.values()];
+}
+
 export function applyOwnerAnswers(
   p: BusinessProfile,
   input: z.input<typeof OwnerAnswersSchema>,
@@ -483,24 +511,36 @@ export function applyOwnerAnswers(
     };
     offerings.push({ ...base, unknown: unknownFields(base) } as Offering);
   }
-  const notOffered = [
-    ...p.notOffered,
-    ...p.offerings
-      .filter((o) => removed.has(o.id))
-      .map((o) => ({ name: o.name, aliases: o.subOfferings, sources: [owner] })),
-    ...a.notOffered.map((n) => ({ name: n.name, aliases: n.aliases, sources: [owner] })),
-  ];
+  const notOffered = dedupeBy(
+    [
+      ...p.notOffered,
+      ...p.offerings
+        .filter((o) => removed.has(o.id))
+        .map((o) => ({ name: o.name, aliases: o.subOfferings, sources: [owner] })),
+      ...a.notOffered.map((n) => ({ name: n.name, aliases: n.aliases, sources: [owner] })),
+    ],
+    (n) => n.name,
+    (keep, dup) => ({
+      ...keep,
+      aliases: uniq([...keep.aliases, ...dup.aliases]),
+      sources: [...keep.sources, ...dup.sources],
+    }),
+  );
   return BusinessProfile.parse({
     ...p,
     offerings,
     notOffered,
     places: {
       locations: a.places?.locations ?? p.places.locations,
-      serves: a.places?.serves ?? p.places.serves,
+      serves: uniq(a.places?.serves ?? p.places.serves),
       nationwide: a.places?.nationwide ?? p.places.nationwide,
     },
     ...(a.conversion ? { conversion: a.conversion } : {}),
-    facts: [...p.facts, ...a.facts.map((fact) => ({ fact, sources: [owner] }))],
+    facts: dedupeBy(
+      [...p.facts, ...a.facts.map((fact) => ({ fact, sources: [owner] }))],
+      (f) => f.fact,
+      (keep, dup) => ({ ...keep, sources: [...keep.sources, ...dup.sources] }),
+    ),
     brand: {
       own: a.brand?.own ?? p.brand.own,
       neverTarget: a.brand?.neverTarget ?? p.brand.neverTarget,
