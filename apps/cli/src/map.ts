@@ -20,7 +20,9 @@ import {
   type SiteMaps,
 } from "@mycel/schema";
 import { z } from "zod";
+import { readProfile } from "./business.ts";
 import { CONTEXT_FILE, QUERIES_FILE } from "./cluster.ts";
+import { dataforseoFromEnv } from "./dataforseo.ts";
 import { assertConfirmed, readInput } from "./input.ts";
 import type { CommandResult } from "./run-command.ts";
 
@@ -130,6 +132,10 @@ export interface MapOptions {
   contextFile?: string;
   /** pages.json or research.json. Default: research.json next to the clusters file, when it exists. */
   pagesFile?: string;
+  /** The confirmed business profile. Default: business.json next to the context, when it exists. */
+  businessFile?: string;
+  /** DataforSEO cache folder for the one-page-per-intent check (cache only, no paid calls). */
+  cacheDir?: string;
   /** A test client's expectations.json: run the gate check on the map. */
   expectFile?: string;
   out?: string;
@@ -151,8 +157,15 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
   const dir = dirname(opts.clustersFile);
   const clusters = readInput(opts.clustersFile, ClusterSet, CLUSTERS_FILE);
   const contextFile = opts.contextFile ?? join(dir, "context.json");
-  const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
-  assertConfirmed(context, contextFile, opts.allowUnconfirmed);
+  const read = readInput(contextFile, ClientContext, CONTEXT_FILE);
+  assertConfirmed(read, contextFile, opts.allowUnconfirmed);
+  const businessFile =
+    opts.businessFile ??
+    (existsSync(join(dirname(contextFile), "business.json"))
+      ? join(dirname(contextFile), "business.json")
+      : undefined);
+  const business = read.business ?? (businessFile ? readProfile(businessFile) : undefined);
+  const context: ClientContext = business ? { ...read, business } : read;
   const queriesFile =
     opts.queriesFile ??
     (existsSync(join(dir, "queries.json")) ? join(dir, "queries.json") : undefined);
@@ -176,6 +189,7 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
       context: contextFile,
       pages: pagesFile ?? null,
       expect: opts.expectFile ?? null,
+      business: business ? (businessFile ?? "in context") : null,
       model: opts.model,
     },
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
@@ -184,12 +198,22 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
   if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
   if (!queriesFile) lines.push("note        no queries.json: intent falls back to the tier");
   if (!pagesFile) lines.push("note        no pages: existing pages are not linked");
+  if (!business) lines.push("note        no business.json: map without the business profile");
+  else if (!business.confirmed) lines.push("note        business profile is not confirmed");
   let out: string | undefined;
   let gate: GateResult | undefined;
   let failure: unknown;
   try {
     const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
-    const result = await runStep(run, mapStep(llm), {
+    // Cache only: the one-page-per-intent check reuses SERPs clustering already paid for.
+    const serps = business
+      ? dataforseoFromEnv(env, {
+          cacheDir: opts.cacheDir ?? ".cache",
+          budgetUsd: 0.01,
+          allowLiveSerp: false,
+        })
+      : undefined;
+    const result = await runStep(run, mapStep(llm, serps), {
       context,
       clusters,
       queries,

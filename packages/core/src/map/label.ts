@@ -22,7 +22,7 @@ import { type PageRef, pageTitle } from "./site.ts";
  * another page. It never adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "7" } as const;
+export const MAP_TEMPLATE = { id: "map-label", version: "8" } as const;
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -37,6 +37,8 @@ export const LabelAnswer = z.object({
       drop: z.enum(["other_business", "place_not_served", "off_offer"]).nullish(),
       /** Only for top-level pages: a hub id ("h3") or "root". */
       parent: z.string().max(20).nullish(),
+      /** Only for pages marked pickOffering: an offering id ("o2") or null. */
+      offering: z.string().max(20).nullish(),
     }),
   ),
 });
@@ -61,18 +63,36 @@ export function buildLabelMessages(
     `- "name": in ${lang}, a short title for the page (2 to 6 words) as a visitor would read it in a menu or heading: natural word order and correct spelling, not the raw search ("Citroenplant", not "citroen plant kopen online"). Keep a term of art as people write it ("Business Central").`,
     `- "drop": leave it out unless the page clearly doesn't belong in this business's map. Then give one reason: "other_business" (the search is for another named business, brand, website or person), "place_not_served" (it names a town, neighbourhood or street where the business has no location: the profile lists its market and its locations; a neighbourhood or street of the market city without a location counts too, however many people search for it), "off_offer" (it has nothing to do with what the business offers or what its customers ask: a general term from another field, a do-it-yourself or retail product search for a service business). When unsure, leave it out.`,
     `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"). Hubs marked "site" are sections the business's website already has (a service, product category or location): prefer them whenever the page is part of that topic, so new pages slot into the existing site. Choose "root" (directly under "${entity}") only when the page is itself a main pillar of the business, a main service, product category or theme that other pages will hang under; a page about one question, one detail or one variant is never root. A core page never goes under an outer hub. Never pick the page itself.`,
+    ...(ctx.business
+      ? [
+          `- "offering": only for pages marked pickOffering. The business offering this page helps sell, from the offering list (its id, e.g. "o2"): the page answers a question its buyers ask, compares it, or explains a part of it. null when it helps sell none of them; such a page needs a strong reason to stay, so judge "drop" with that in mind.`,
+        ]
+      : []),
     'Answer with JSON: {"results":[{"i":0,"attribute":"...","macroContext":"...","why":"...","name":"...","parent":"h3"}]}. Answer every number exactly once.',
   ].join("\n");
+  const offerKey = new Map((ctx.business?.offerings ?? []).map((o, i) => [o.id, `o${i}`]));
   const profile = {
     business: ctx.site.name,
     market: ctx.market,
     sourceContext: ctx.sourceContext,
     centralEntity: ctx.centralEntities.find((e) => e.name === entity) ?? { name: entity },
     centralSearchIntent: ctx.centralSearchIntent,
-    offerings: ctx.offerings,
+    offerings: ctx.business
+      ? ctx.business.offerings.map((o) => ({
+          id: offerKey.get(o.id),
+          name: o.name,
+          ...(o.subOfferings.length ? { parts: o.subOfferings.slice(0, 8) } : {}),
+          ...(o.value === "top" ? { top: true } : {}),
+        }))
+      : ctx.offerings,
+    ...(ctx.business?.notOffered.length
+      ? { notOffered: ctx.business.notOffered.map((n) => n.name) }
+      : {}),
     audiences: ctx.audiences,
     ...(locations.length ? { locations } : {}),
+    ...(ctx.business?.places.nationwide ? { servesWholeCountry: true } : {}),
   };
+  const offeringName = new Map((ctx.business?.offerings ?? []).map((o) => [o.id, o.name]));
   const pages = batch.map((n, i) => ({
     i,
     page: n.mainQuery,
@@ -81,6 +101,11 @@ export function buildLabelMessages(
     volume: n.volume,
     queries: n.queries.slice(0, 8),
     ...(n.sections.length ? { sections: n.sections.slice(0, 5).map((s) => s.mainQuery) } : {}),
+    ...(n.offeringId
+      ? { offering: offeringName.get(n.offeringId) }
+      : ctx.business && !n.isRoot
+        ? { pickOffering: true }
+        : {}),
     ...(n.isRoot
       ? {}
       : n.parentId
@@ -113,10 +138,17 @@ export async function labelPlan(
 ): Promise<Map<string, NodeLabel>> {
   const labels = new Map<string, NodeLabel>();
   // Where the business is: its location pages, by name. A place that isn't here isn't served.
-  const locations = pages
-    .filter((p) => p.kind === "location")
-    .map((p) => pageTitle(p, plan.context.site.name))
-    .filter(Boolean);
+  const places = plan.context.business?.places;
+  const locations = [
+    ...new Set([
+      ...pages
+        .filter((p) => p.kind === "location")
+        .map((p) => pageTitle(p, plan.context.site.name))
+        .filter(Boolean),
+      ...(places?.locations.map((l) => `${l.name} (${l.city})`) ?? []),
+      ...(places && !places.nationwide ? places.serves : []),
+    ]),
+  ];
   const work: {
     entity: string;
     batch: NodeDraft[];
@@ -160,6 +192,11 @@ export async function labelPlan(
       if (r.why?.trim()) label.why = r.why.trim();
       if (r.name?.trim()) label.name = r.name.trim();
       if (r.drop) label.drop = r.drop as FitReason;
+      const offer = r.offering?.trim();
+      if (offer && !n.offeringId && /^o\d+$/.test(offer)) {
+        const o = plan.context.business?.offerings[Number(offer.slice(1))];
+        if (o) label.offering = o.id;
+      }
       if (!n.isRoot && !n.parentId && !n.hub) {
         const pick = r.parent?.trim() ?? "";
         const hub = /^h\d+$/.test(pick) ? w.hubs[Number(pick.slice(1))] : undefined;

@@ -64,7 +64,8 @@ export function mapShape(nodes: MapNode[]): MapShape {
       (n) => n.level === "seed" || byId.get(n.parentId ?? "")?.hub === "site",
     ).length,
     // The site's own sections may stand alone; a flat map is about the pages the map proposes.
-    childless: hubs.filter((n) => n.hub !== "site" && !kids.get(n.id)).length,
+    childless: hubs.filter((n) => n.hub !== "site" && n.hub !== "offering" && !kids.get(n.id))
+      .length,
     widest: widest ?? null,
   };
 }

@@ -45,8 +45,11 @@ export interface NodeDraft {
   /**
    * "site": an existing service, category or location page sits on it, a locked hub
    * (anchorSiteHubs). "theme": a new hub the model proposed to group pages (group.ts).
+   * "offering": the page for a business offering (attach.ts), locked under the root.
    */
-  hub?: "site" | "theme";
+  hub?: "site" | "theme" | "offering";
+  /** The business offering this page serves (attach.ts), when the business is modelled. */
+  offeringId?: string;
   /** Display name when known from data: a site hub's page heading, a theme hub's name. */
   name?: string;
   qdpWhy: string;
@@ -65,6 +68,8 @@ export interface NodeLabel {
   drop?: FitReason;
   /** Model's hub choice for a top-level page: a node id, or "root". */
   parent?: string;
+  /** Model's offering for a page the words didn't tie to one (business profile ids). */
+  offering?: string;
 }
 
 export interface MapPlan {

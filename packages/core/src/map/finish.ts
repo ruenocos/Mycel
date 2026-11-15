@@ -142,7 +142,7 @@ function finishOne(
   for (const [id, hubId] of groups?.parents ?? []) {
     const n = byId.get(id);
     const hub = byId.get(hubId);
-    if (!n || !hub || n.isRoot || n.hub === "site" || hub === n) continue;
+    if (!n || !hub || n.isRoot || n.hub === "site" || n.hub === "offering" || hub === n) continue;
     if (n.section === "core" && hub.section === "outer") continue;
     if (createsLoop(parent, root.id, id, hubId)) continue;
     parent.set(id, hubId);
@@ -317,7 +317,21 @@ function finishOne(
   });
   const linksOf = linkPlan({ nodes, root, parent, score, quality });
 
+  // The offering a page serves: its own (words), the model's, else its nearest hub's.
+  const draftOf = new Map(all.map((n) => [n.id, n]));
+  const offeringOf = (n: NodeDraft): string | undefined => {
+    const seen = new Set<string>();
+    for (let cur: NodeDraft | undefined = n; cur && !seen.has(cur.id); ) {
+      seen.add(cur.id);
+      const id = cur.offeringId ?? labels.get(cur.id)?.offering;
+      if (id) return id;
+      const up = parent.get(cur.id);
+      cur = up ? draftOf.get(up) : undefined;
+    }
+    return undefined;
+  };
   const mapNodes: MapNode[] = all.map((n) => {
+    const offeringId = n.isRoot ? undefined : offeringOf(n);
     const label = labels.get(n.id) ?? {};
     const top = pagesOf(n)[0];
     const conflict = conflictOf(n);
@@ -330,6 +344,7 @@ function finishOne(
       ...(p ? { parentId: p } : {}),
       ...(n.hub ? { hub: n.hub } : {}),
       ...(n.name ? { name: n.name } : {}),
+      ...(offeringId ? { offeringId } : {}),
       rawNode: {
         entity,
         attribute: label.attribute?.trim() || (n.isRoot ? "overview" : n.mainQuery),
