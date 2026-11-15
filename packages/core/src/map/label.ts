@@ -135,6 +135,8 @@ export async function labelPlan(
   opts: { model: string; batchSize: number; concurrency: number },
   ctx: StepContext,
   pages: PageRef[] = [],
+  /** Pages already left out by data rules (the offer gate): not worth a model call. */
+  skip: Set<string> = new Set(),
 ): Promise<Map<string, NodeLabel>> {
   const labels = new Map<string, NodeLabel>();
   // Where the business is: its location pages, by name. A place that isn't here isn't served.
@@ -158,15 +160,16 @@ export async function labelPlan(
   for (const { entity, nodes } of plan.entities) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const hubs = hubChoices(plan, entity)
-      .hubs.slice()
+      .hubs.filter((h) => !skip.has(h.id))
       .sort(
         (a, b) =>
           Number(!!b.hub) - Number(!!a.hub) ||
           (a.section === b.section ? b.volume - a.volume : a.section === "core" ? -1 : 1),
       )
       .slice(0, MAX_HUBS);
-    for (let i = 0; i < nodes.length; i += opts.batchSize) {
-      work.push({ entity, batch: nodes.slice(i, i + opts.batchSize), hubs, byId });
+    const todo = nodes.filter((n) => !skip.has(n.id));
+    for (let i = 0; i < todo.length; i += opts.batchSize) {
+      work.push({ entity, batch: todo.slice(i, i + opts.batchSize), hubs, byId });
     }
   }
   let invalidHubs = 0;

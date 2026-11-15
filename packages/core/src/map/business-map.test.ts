@@ -211,6 +211,8 @@ describe("mergeSameIntent", () => {
 });
 
 /** A stub model: labels every page; names the offering of open pages by a fixed list. */
+const prompts: string[] = [];
+
 function stub(offers: Record<string, string> = {}): JsonModel {
   return {
     async generateJson(
@@ -218,6 +220,7 @@ function stub(offers: Record<string, string> = {}): JsonModel {
       schema: { parse: (v: unknown) => unknown },
     ) {
       const user = req.messages[1]?.content ?? "";
+      prompts.push(user);
       if (user.includes("\nMap pages:\n")) {
         const existing = JSON.parse(user.split("\nExisting pages:\n")[1] ?? "[]") as {
           p: number;
@@ -265,6 +268,8 @@ describe("mapStep with a business profile", () => {
     const map = maps.maps[0] as (typeof maps.maps)[number];
     expect(TopicalMap.safeParse(map).success).toBe(true);
     expect(map.leftOut.map((l) => l.mainQuery)).toContain("fiets lease");
+    // The gate's pages never reach the model.
+    expect(prompts.some((p) => p.includes('"page": "fiets lease"'))).toBe(false);
     const core = map.nodes.filter((n) => n.section === "core" && n.level !== "root");
     expect(core.every((n) => n.offeringId)).toBe(true);
     // The offering page sits on the site's own rental page: a locked site section under home.

@@ -160,6 +160,7 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
         { ...opts, batchSize: input.batchSize },
         meter.rec,
         pages,
+        new Set(attached?.gate.keys() ?? []),
       );
       for (const [id, reason] of attached?.gate ?? []) {
         labels.set(id, { ...labels.get(id), drop: reason });
