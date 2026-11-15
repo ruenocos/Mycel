@@ -3,7 +3,15 @@ import type { FitReason, MapPlan, NodeDraft } from "./plan.ts";
 import { tokens } from "./plan.ts";
 import { QUESTION_WORDS } from "./rules.ts";
 import type { PageRef } from "./site.ts";
-import { buildSkeleton, type Cell, cellOf, noGoOf, type Skeleton } from "./skeleton.ts";
+import {
+  buildSkeleton,
+  type Cell,
+  cellOf,
+  covers,
+  noGoOf,
+  type Skeleton,
+  sameWord,
+} from "./skeleton.ts";
 import { slugify } from "./urls.ts";
 
 /**
@@ -82,6 +90,26 @@ export function attachToBusiness(
   const cellOfNode = new Map<string, Cell>();
   const stats = { cells: sk.cells.length, byWords: 0, created: 0, demoted: 0, gated: 0, open: 0 };
 
+  // A search for the central entity itself, alone or with a place the business serves
+  // ("fysiotherapeut utrecht"), is about the business as a whole: it stays core even when it
+  // names no single offering.
+  const entityKeys = plan.entities.map((e) => tokens(e.entity, lang));
+  const placeWords = new Set(
+    [
+      ctx.market.city ?? "",
+      ...business.places.locations.flatMap((l) => [l.name, l.city]),
+      ...business.places.serves,
+    ].flatMap((p) => [...tokens(p, lang)]),
+  );
+  const namesEntity = (words: Set<string>) =>
+    entityKeys.some((k) => {
+      if (!covers(words, k)) return false;
+      const part = (w: string) =>
+        [...k].some((x) => x === w || sameWord(w, x)) ||
+        [...k].some((x) => [...k].some((y) => x !== y && x + y === w));
+      const rest = [...words].filter((w) => !placeWords.has(w) && !part(w));
+      return rest.length === 0;
+    });
   for (const n of all) {
     if (n.isRoot) continue;
     const words = tokens(n.mainQuery, lang);
@@ -97,7 +125,7 @@ export function attachToBusiness(
       n.offeringId = cell.offeringId;
       cellOfNode.set(n.id, cell);
       stats.byWords++;
-    } else if (n.section === "core") {
+    } else if (n.section === "core" && !namesEntity(words)) {
       // A core page sells something the business offers; without one it is supporting knowledge.
       n.section = "outer";
       stats.demoted++;

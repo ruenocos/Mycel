@@ -52,8 +52,18 @@ export function sameWord(a: string, b: string): boolean {
   return i >= 9 && a.length - i <= 3 && b.length - i <= 3;
 }
 
-export const covers = (words: Set<string>, key: Set<string>) =>
-  key.size > 0 && [...key].every((k) => words.has(k) || [...words].some((w) => sameWord(w, k)));
+/**
+ * A key's words are all in the search, as written, as another form of the word, or written apart
+ * ("dak lekkage" for "daklekkage", the same compound rule the planner uses).
+ */
+export const covers = (words: Set<string>, key: Set<string>) => {
+  if (!key.size) return false;
+  const list = [...words];
+  const joined = list.flatMap((a) => list.filter((b) => b !== a).map((b) => a + b));
+  return [...key].every(
+    (k) => words.has(k) || list.some((w) => sameWord(w, k)) || joined.includes(k),
+  );
+};
 
 export function buildSkeleton(
   business: BusinessProfile,

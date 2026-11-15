@@ -16,7 +16,7 @@ import { runStep } from "../step.ts";
 import { attachToBusiness, lockOfferingHubs } from "./attach.ts";
 import { mergeSameIntent } from "./intent.ts";
 import { planMaps, tokens } from "./plan.ts";
-import { buildSkeleton, cellOf, sameWord } from "./skeleton.ts";
+import { buildSkeleton, cellOf, covers, sameWord } from "./skeleton.ts";
 import { mapStep } from "./step.ts";
 
 // A neutral test business (not one of the test clients): a bike workshop.
@@ -96,6 +96,7 @@ const clusters = ClusterSet.parse({
     cluster("bandfiets", "outer", [["fietsband plakken", 300]]),
     cluster("lease", "core", [["fiets lease", 800]]),
     cluster("kopen", "core", [["fiets kopen", 2000]]),
+    cluster("zwolle", "core", [["fiets zwolle", 900]]),
     cluster("ketting", "outer", [["fietsketting smeren", 700]]),
   ],
   unclustered: [],
@@ -158,6 +159,8 @@ describe("business skeleton", () => {
     expect(sameWord("fysiotherapeut", "fysiotherapie")).toBe(true);
     expect(sameWord("projectbedrijf", "projectbeheer")).toBe(false);
     expect(sameWord("dakdekker", "dakdekking")).toBe(false);
+    // A compound written apart is the same word.
+    expect(covers(t("dak lekkage rotterdam"), t("daklekkage"))).toBe(true);
     // A bare attribute value without its offering is not claimed.
     expect(cellOf(t("elektrische auto"), sk)).toBeUndefined();
   });
@@ -172,6 +175,8 @@ describe("attachToBusiness", () => {
     expect([...res.gate]).toEqual([["n-lease", "off_offer"]]);
     expect(by("fiets kopen")?.section).toBe("outer");
     expect(by("fiets kopen")?.offeringId).toBeUndefined();
+    // The central entity with a place the business serves stays core.
+    expect(by("fiets zwolle")?.section).toBe("core");
     // The plain search is the offering's page; the more specific ones hang under it.
     expect(res.anchors.get("fietsreparatie")).toBe("n-reparatie");
     expect(by("fietsreparatie kosten")?.parentId).toBe("n-reparatie");
@@ -274,7 +279,10 @@ describe("mapStep with a business profile", () => {
     expect(map.leftOut.map((l) => l.mainQuery)).toContain("fiets lease");
     // The gate's pages never reach the model.
     expect(prompts.some((p) => p.includes('"page": "fiets lease"'))).toBe(false);
-    const core = map.nodes.filter((n) => n.section === "core" && n.level !== "root");
+    // Every core page sells an offering, except the business itself in its town.
+    const core = map.nodes.filter(
+      (n) => n.section === "core" && n.level !== "root" && n.mainQuery !== "fiets zwolle",
+    );
     expect(core.every((n) => n.offeringId)).toBe(true);
     // The offering page sits on the site's own rental page: a locked site section under home.
     const rental = map.nodes.find((n) => n.id === "o-fietsverhuur");

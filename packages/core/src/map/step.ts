@@ -115,7 +115,9 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
       const business = input.context.business;
       const attached = business ? attachToBusiness(plan, business, input.pages) : undefined;
       if (attached) ctx.log.info("pages attached to the business", attached.stats);
-      if (attached && serpPort && input.intentSerps) {
+      const serps = new Map<string, ClusterSerp>();
+      const useSerps = !!(attached && serpPort && input.intentSerps);
+      if (attached && serpPort && useSerps) {
         const queries = [
           ...new Set(
             plan.entities.flatMap((e) =>
@@ -125,9 +127,10 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
         ];
         const res = await serpPort.serpOrganicBatch(queries, input.context.market, ctx);
         for (const f of res.failed) ctx.log.warn("map: SERP failed", f);
+        for (const [k, v] of res.serps) serps.set(k, v);
         const merges = mergeSameIntent(
           plan,
-          res.serps as Map<string, ClusterSerp>,
+          serps,
           new Set(attached.anchors.values()),
           new Set(attached.gate.keys()),
         );
@@ -151,6 +154,34 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
       });
       const site = anchorSiteHubs(plan, pages, linked.links);
       if (attached) lockOfferingHubs(plan, attached.anchors);
+      if (attached && serpPort && useSerps) {
+        // The site's own sections are pages now too: a planned page for the same search folds
+        // into the section the site already has.
+        const missing = [
+          ...new Set(plan.entities.flatMap((e) => e.nodes.map((n) => n.mainQuery))),
+        ].filter((q) => !serps.has(q));
+        if (missing.length) {
+          const res = await serpPort.serpOrganicBatch(missing, input.context.market, ctx);
+          for (const [k, v] of res.serps) serps.set(k, v);
+        }
+        const locked = new Set(
+          plan.entities
+            .flatMap((e) => e.nodes.filter((n) => n.hub && n.hub !== "theme"))
+            .map((n) => n.id),
+        );
+        const merges = mergeSameIntent(plan, serps, locked, new Set(attached.gate.keys()));
+        const into = new Map(merges.map((m) => [m.folded, m.kept]));
+        for (const [url, id] of site.links)
+          if (id && into.has(id)) site.links.set(url, into.get(id) as string);
+        for (const [url, id] of linked.also)
+          if (into.has(id)) linked.also.set(url, into.get(id) as string);
+        if (merges.length) {
+          ctx.log.info("one page per intent, with site sections", {
+            merged: merges.length,
+            examples: merges.slice(0, 10),
+          });
+        }
+      }
       ctx.log.info("site hubs", {
         hubs: [...site.hubs].map(([entity, ids]) => ({ entity, count: ids.length })),
       });
