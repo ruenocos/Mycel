@@ -1,16 +1,35 @@
 {
-  "name": "@mycel/core",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@ruenocos/mycel-core",
+  "version": "0.1.0",
+  "description": "Mycel engine: all SEO logic, one step per stage of the topical map method.",
+  "license": "UNLICENSED",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ruenocos/Mycel",
+    "directory": "packages/core"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      }
+    }
+  },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mycel/schema": "workspace:*",
+    "@mycel/schema": "workspace:@ruenocos/mycel-schema@*",
     "zod": "^4.6.7"
   }
 }

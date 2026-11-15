@@ -37,9 +37,18 @@ Node 22+ and pnpm 10.
 packages/core        all SEO logic, one step per Koray stage
 packages/schema      Zod schemas and the step contract
 packages/connectors  DataforSEO (cached), GSC, LLM provider switch
-apps/cli             the terminal tool (phase 1-2)
-apps/web, apps/jobs, apps/wp-plugin   arrive in later phases
+apps/cli             the terminal tool
 docs/adr             one short record per settled decision
+```
+
+## The engine as packages
+
+The web platform lives in its own repo, `ruenocos/mycel-dash`, and uses this engine as packages published to GitHub Packages (ADR 0018). Code imports `@mycel/core`; the published name is `@ruenocos/mycel-core`.
+
+```bash
+pnpm build          # dist/ for every package (the CLI and tests don't need it)
+pnpm changeset      # in a PR that changes an engine package: describe the change
+pnpm release        # build + publish; needs a token that can write packages
 ```
 
 ## Decisions

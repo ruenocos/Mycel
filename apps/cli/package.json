@@ -10,9 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mycel/connectors": "workspace:*",
-    "@mycel/core": "workspace:*",
-    "@mycel/schema": "workspace:*",
+    "@mycel/connectors": "workspace:@ruenocos/mycel-connectors@*",
+    "@mycel/core": "workspace:@ruenocos/mycel-core@*",
+    "@mycel/schema": "workspace:@ruenocos/mycel-schema@*",
     "commander": "^14.0.0",
     "zod": "^4.6.7"
   }

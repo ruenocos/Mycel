@@ -1,0 +1,26 @@
+name: Release packages
+# Publishes @ruenocos/mycel-* to GitHub Packages (ADR 0018). Run by hand after a
+# "Version packages" PR (pnpm changeset version) is merged; `pnpm release` does the same locally.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@ruenocos"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm release
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
