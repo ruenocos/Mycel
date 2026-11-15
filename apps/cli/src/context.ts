@@ -16,7 +16,7 @@ import {
   contextProposeStep,
   type EvidenceExtras,
   editField,
-  formatTimeline,
+  MycelError,
   markConfirmed,
   REVIEW_FIELDS,
   type ReviewField,
@@ -27,6 +27,8 @@ import {
 } from "@mycel/core";
 import { ClientContext, Market, SitePages } from "@mycel/schema";
 import { dataforseoFromEnv, runBudget } from "./dataforseo.ts";
+import { command } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel context propose` and `mycel context confirm` (issue #15, Koray steps 1-6).
@@ -111,9 +113,9 @@ export function assertReplaceable(file: string, force = false): void {
     reviewed = "isn't a context this version can read";
   }
   if (reviewed) {
-    throw new Error(
-      `${file} ${reviewed}; a new proposal would replace it. Use --out for another file, or --force to replace it (the current file is kept as a backup)`,
-    );
+    throw new MycelError("WOULD_REPLACE", `${file} ${reviewed}; a new proposal would replace it`, {
+      fix: "use --out for another file, or --force to replace it (the current file is kept as a backup)",
+    });
   }
 }
 
@@ -126,12 +128,9 @@ export function backupFile(file: string, now = new Date()): string | undefined {
   return copy;
 }
 
-export interface ProposeResult {
+export interface ProposeResult extends CommandResult {
   runId: string;
-  ok: boolean;
   out?: string;
-  lines: string[];
-  timeline: string;
 }
 
 const isUrl = (s: string) => /^https?:\/\//i.test(s);
@@ -173,9 +172,9 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
         if (!market) {
           const lang = await wp.siteLanguage(ctx);
           if (!lang?.country) {
-            throw new Error(
-              `can't tell the market from ${siteUrl}; pass --market "NL / nl" (country / language / city)`,
-            );
+            throw new MycelError("USAGE", `can't tell the market from ${siteUrl}`, {
+              fix: 'pass --market "NL / nl" (country / language / city)',
+            });
           }
           market = Market.parse({ country: lang.country, language: lang.language });
           ctx.log.info("market detected from <html lang>", { market });
@@ -229,7 +228,11 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
         // A fixture folder: only pages.json is read. context.json there is the answer key.
         site = SitePages.parse(JSON.parse(readFileSync(join(opts.site, "pages.json"), "utf8")));
         siteUrl = `https://${site.site.replace(/^https?:\/\//, "")}`;
-        if (!market) throw new Error('a fixture has no <html lang>; pass --market "NL / nl"');
+        if (!market) {
+          throw new MycelError("USAGE", "a fixture has no <html lang> to read the market from", {
+            fix: 'pass --market "NL / nl" (country / language / city)',
+          });
+        }
       }
       return {
         evidence: buildEvidence(site, siteUrl, extras),
@@ -260,19 +263,22 @@ export async function contextPropose(opts: ProposeOptions): Promise<ProposeResul
     if (backup) lines.push(`backup      ${backup} (the file that was there)`);
     writeFileSync(target, `${JSON.stringify(context, null, 2)}\n`);
     out = target;
-    lines.push(`proposal    ${out}`);
-    lines.push(`next        mycel context confirm ${out}`);
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out
+      ? {
+          out,
+          outputs: { proposal: out },
+          next: [{ command: command("context confirm", out) }],
+        }
+      : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }
 

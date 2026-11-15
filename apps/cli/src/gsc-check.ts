@@ -1,5 +1,7 @@
 import { GscClient, type GscRow, loadServiceAccount } from "@mycel/connectors";
-import { CORE_VERSION, formatTimeline, RunStore } from "@mycel/core";
+import { CORE_VERSION, MycelError, RunStore } from "@mycel/core";
+import { KEY_FIX } from "./dataforseo.ts";
+import type { CommandResult } from "./run-command.ts";
 
 export interface GscCheckOptions {
   runsDir: string;
@@ -12,11 +14,8 @@ export interface GscCheckOptions {
   today?: Date;
 }
 
-export interface GscCheckResult {
+export interface GscCheckResult extends CommandResult {
   runId: string;
-  ok: boolean;
-  lines: string[];
-  timeline: string;
 }
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
@@ -39,11 +38,17 @@ export async function gscCheck(opts: GscCheckOptions): Promise<GscCheckResult> {
   });
   let failure: unknown;
   try {
-    if (!property) throw new Error("GSC_PROPERTY is not set (e.g. sc-domain:example.com)");
+    if (!property) {
+      throw new MycelError("KEY_MISSING", "GSC_PROPERTY is not set (e.g. sc-domain:example.com)", {
+        fix: KEY_FIX,
+      });
+    }
     let client = opts.client;
     if (!client) {
       const path = env.GSC_CREDENTIALS_PATH;
-      if (!path) throw new Error("GSC_CREDENTIALS_PATH is not set");
+      if (!path) {
+        throw new MycelError("KEY_MISSING", "GSC_CREDENTIALS_PATH is not set", { fix: KEY_FIX });
+      }
       client = new GscClient({ credentials: loadServiceAccount(path), property });
     }
     const gsc = client;
@@ -53,9 +58,9 @@ export async function gscCheck(opts: GscCheckOptions): Promise<GscCheckResult> {
     const match = sites.find((s) => s.siteUrl === property);
     lines.push(`properties       ${sites.map((s) => s.siteUrl).join(", ") || "(none)"}`);
     if (!match) {
-      throw new Error(
-        `the service account has no access to ${property}. Add ${gsc.serviceAccountEmail} as a user (Restricted is enough) in Search Console > Settings > Users and permissions`,
-      );
+      throw new MycelError("AUTH_REFUSED", `the service account has no access to ${property}`, {
+        fix: `add ${gsc.serviceAccountEmail} as a user (Restricted is enough) in Search Console > Settings > Users and permissions`,
+      });
     }
     lines.push(`access           ${match.permissionLevel} on ${property}`);
 
@@ -78,13 +83,12 @@ export async function gscCheck(opts: GscCheckOptions): Promise<GscCheckResult> {
     if (rows.length === 0) lines.push("  (no rows: is the property new or empty?)");
   } catch (err) {
     failure = err;
-    lines.push(`error            ${(err as Error).message}`);
   }
   run.finish(failure);
   return {
     runId: run.runId,
     ok: failure === undefined,
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }

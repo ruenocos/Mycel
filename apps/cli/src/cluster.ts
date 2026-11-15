@@ -1,25 +1,25 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   CORE_VERSION,
   clusterStep,
-  formatTimeline,
+  MycelError,
   RunStore,
   runStep,
   type SerpBatchPort,
 } from "@mycel/core";
 import { ClientContext, type ClusterSet, FilteredQueries } from "@mycel/schema";
-import { costLine, dataforseoFromEnv, runBudget } from "./dataforseo.ts";
+import { costLine, dataforseoFromEnv, KEYS_FIX, runBudget } from "./dataforseo.ts";
+import { assertConfirmed, command, readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel cluster <queries.json>` (issue #18, Koray step 10). Thin shell: fetches a SERP per kept
  * query in batches, then core clusters on SERP overlap and applies the QDP rule.
  */
 
-const readJson = (path: string) => {
-  if (!existsSync(path)) throw new Error(`no file at ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
-};
+export const QUERIES_FILE = { name: "queries file", writtenBy: "mycel filter" };
+export const CONTEXT_FILE = { name: "context", writtenBy: "mycel context propose" };
 
 const tierRank = (l: string) => (l === "core" ? 0 : l === "outer" ? 1 : 2);
 
@@ -62,28 +62,24 @@ export interface ClusterOptionsCli {
   port?: SerpBatchPort;
 }
 
-export interface ClusterResult {
+export interface ClusterResult extends CommandResult {
   runId: string;
-  ok: boolean;
   out?: string;
-  lines: string[];
-  timeline: string;
 }
 
 export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult> {
   const env = opts.env ?? process.env;
   const budgetUsd = runBudget(opts.budgetUsd, 3);
   if (opts.minShared !== undefined && !(Number.isInteger(opts.minShared) && opts.minShared > 0)) {
-    throw new Error(`--min-shared must be a positive whole number, got ${opts.minShared}`);
-  }
-  const queries = FilteredQueries.parse(readJson(opts.queriesFile));
-  const contextFile = opts.contextFile ?? join(dirname(opts.queriesFile), "context.json");
-  const context = ClientContext.parse(readJson(contextFile));
-  if (!context.confirmed && !opts.allowUnconfirmed) {
-    throw new Error(
-      `${contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
+    throw new MycelError(
+      "USAGE",
+      `--min-shared must be a positive whole number, got ${opts.minShared}`,
     );
   }
+  const queries = readInput(opts.queriesFile, FilteredQueries, QUERIES_FILE);
+  const contextFile = opts.contextFile ?? join(dirname(opts.queriesFile), "context.json");
+  const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
+  assertConfirmed(context, contextFile, opts.allowUnconfirmed);
   const dfs = dataforseoFromEnv(env, {
     cacheDir: opts.cacheDir ?? ".cache",
     budgetUsd,
@@ -109,7 +105,10 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
   let out: string | undefined;
   let failure: unknown;
   try {
-    if (!port) throw new Error("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set");
+    if (!port)
+      throw new MycelError("KEY_MISSING", "DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set", {
+        fix: KEYS_FIX,
+      });
     const result = await runStep(run, clusterStep(port), {
       context,
       queries,
@@ -120,17 +119,15 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
     writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
     lines.push(...summarizeClusters(result));
     if (dfs) lines.push(costLine(dfs, budgetUsd, env));
-    lines.push(`clusters    ${out}`);
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out ? { out, outputs: { clusters: out }, next: [{ command: command("map", out) }] } : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }

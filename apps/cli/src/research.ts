@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   FakeProvider,
@@ -12,8 +12,8 @@ import {
 import {
   CORE_VERSION,
   cleanDomain,
-  formatTimeline,
   isReservedHost,
+  MycelError,
   type ResearchPort,
   RunStore,
   researchSeedsStep,
@@ -21,12 +21,17 @@ import {
   runStep,
 } from "@mycel/core";
 import { ClientContext, type ResearchDataset, SitePages } from "@mycel/schema";
-import { costLine, dataforseoFromEnv, runBudget } from "./dataforseo.ts";
+import { CONTEXT_FILE } from "./cluster.ts";
+import { costLine, dataforseoFromEnv, KEYS_FIX, runBudget } from "./dataforseo.ts";
+import { assertConfirmed, command, readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel research <context.json>` (issue #16, Koray steps 7-8). Thin shell: reads pages and GSC,
  * builds the DataforSEO port, and lets core pick seeds and collect the dataset.
  */
+
+export const PAGES_FILE = { name: "pages file", writtenBy: "a fixture (pages.json)" };
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
 const isUrl = (s: string) => /^https?:\/\//i.test(s);
@@ -66,12 +71,9 @@ export interface ResearchOptions {
   port?: ResearchPort;
 }
 
-export interface ResearchResult {
+export interface ResearchResult extends CommandResult {
   runId: string;
-  ok: boolean;
   out?: string;
-  lines: string[];
-  timeline: string;
 }
 
 export function summarize(d: ResearchDataset): string[] {
@@ -105,15 +107,8 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
   const cacheDir = opts.cacheDir ?? ".cache";
   const lines: string[] = [];
   const budgetUsd = runBudget(opts.budgetUsd, 1);
-  if (!existsSync(opts.contextFile)) {
-    throw new Error(`no context at ${opts.contextFile}; run mycel context propose first`);
-  }
-  const context = ClientContext.parse(JSON.parse(readFileSync(opts.contextFile, "utf8")));
-  if (!context.confirmed && !opts.allowUnconfirmed) {
-    throw new Error(
-      `${opts.contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
-    );
-  }
+  const context = readInput(opts.contextFile, ClientContext, CONTEXT_FILE);
+  assertConfirmed(context, opts.contextFile, opts.allowUnconfirmed);
   const host = cleanDomain(new URL(context.site.url).hostname);
   const run = RunStore.create({
     runsDir: opts.runsDir,
@@ -138,14 +133,20 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
   let out: string | undefined;
   let failure: unknown;
   try {
-    if (!port) throw new Error("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set");
+    if (!port) {
+      throw new MycelError("KEY_MISSING", "DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set", {
+        fix: KEYS_FIX,
+      });
+    }
     const data = port;
     const sources = await run.step("research-sources", async (ctx) => {
       const site = opts.site ?? context.site.url;
       let pages: SitePages["pages"];
       if (isUrl(site)) {
         if (isReservedHost(cleanDomain(new URL(site).hostname))) {
-          throw new Error(`${site} is a test domain; pass --site <fixture folder> for its pages`);
+          throw new MycelError("USAGE", `${site} is a test domain, so it has no pages to read`, {
+            fix: "pass --site <fixture folder> for its pages",
+          });
         }
         const wp = new WordPressClient({
           baseUrl: new URL(site).origin,
@@ -153,7 +154,7 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
         });
         pages = (await wp.readSite(ctx)).pages;
       } else {
-        pages = SitePages.parse(JSON.parse(readFileSync(join(site, "pages.json"), "utf8"))).pages;
+        pages = readInput(join(site, "pages.json"), SitePages, PAGES_FILE).pages;
       }
       let gscRows:
         | { query: string; clicks: number; impressions: number; position: number }[]
@@ -228,17 +229,17 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
     writeFileSync(out, `${JSON.stringify(dataset, null, 2)}\n`);
     lines.push(...summarize(dataset));
     if (dfs) lines.push(costLine(dfs, budgetUsd, env));
-    lines.push(`dataset     ${out}`);
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out
+      ? { out, outputs: { research: out }, next: [{ command: command("filter", out) }] }
+      : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }

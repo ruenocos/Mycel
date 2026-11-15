@@ -20,8 +20,10 @@ Client data (Search Console exports, crawls, run output) never goes in this repo
 pnpm install
 cp .env.example .env   # fill in keys, never commit .env
 pnpm check             # typecheck + lint + tests
-pnpm mycel --help
+pnpm mycel --help      # the commands in pipeline order, examples and the exit codes
 ```
+
+Every command ends with a short run summary, the files it wrote and the next command to run. A failure prints what went wrong, the fix and a code; `mycel logs <run>` has the full timeline.
 
 Node 22+ and pnpm 10.
 

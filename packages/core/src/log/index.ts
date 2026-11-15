@@ -1,4 +1,10 @@
-export { serializeError } from "./errors.ts";
+export {
+  ERROR_CODES,
+  type ErrorCode,
+  type ErrorInfo,
+  MycelError,
+  serializeError,
+} from "./errors.ts";
 export {
   appendJsonLine,
   consoleSink,
@@ -9,13 +15,23 @@ export {
   multiSink,
 } from "./logger.ts";
 export { REDACTED, redact, secretsFromEnv } from "./redact.ts";
-export { type CreateRunOptions, newRunId, RunStore, type StepContext } from "./run-store.ts";
 export {
+  type CreateRunOptions,
+  newRunId,
+  RunStore,
+  type StepContext,
+  setRunProgress,
+} from "./run-store.ts";
+export {
+  formatRunSummary,
   formatTimeline,
   listRuns,
+  type RunStepSummary,
+  type RunSummary,
   readRunLog,
   readRunMeta,
   resolveRunId,
+  summarizeRun,
   type TimelineOptions,
 } from "./timeline.ts";
 export type * from "./types.ts";

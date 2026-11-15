@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { FakeProvider, LlmClient, type LlmProvider, OllamaProvider } from "@mycel/connectors";
 import {
   CORE_VERSION,
   type FilterEvalScore,
   filterStep,
-  formatTimeline,
+  MycelError,
   RunStore,
   runStep,
   scoreFilterEval,
@@ -17,6 +17,9 @@ import {
   normalizeQuery,
   ResearchDataset,
 } from "@mycel/schema";
+import { CONTEXT_FILE } from "./cluster.ts";
+import { assertConfirmed, command, readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel filter` and `mycel eval filter` (issue #17, Koray step 9). Thin shell around core's
@@ -40,10 +43,8 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   return [fake, ollama];
 }
 
-const readJson = (path: string) => {
-  if (!existsSync(path)) throw new Error(`no file at ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
-};
+export const RESEARCH_FILE = { name: "research file", writtenBy: "mycel research" };
+const EVAL_SET = { name: "filter eval set", writtenBy: "hand, in a fixture folder" };
 
 export function summarizeFilter(d: FilteredQueries): string[] {
   const lines = [`queries     ${d.stats.total}, kept ${d.stats.kept}`];
@@ -80,24 +81,17 @@ export interface FilterOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export interface FilterResult {
+export interface FilterResult extends CommandResult {
   runId: string;
-  ok: boolean;
   out?: string;
-  lines: string[];
-  timeline: string;
 }
 
 export async function filterRun(opts: FilterOptions): Promise<FilterResult> {
   const env = opts.env ?? process.env;
-  const research = ResearchDataset.parse(readJson(opts.researchFile));
+  const research = readInput(opts.researchFile, ResearchDataset, RESEARCH_FILE);
   const contextFile = opts.contextFile ?? join(dirname(opts.researchFile), "context.json");
-  const context = ClientContext.parse(readJson(contextFile));
-  if (!context.confirmed && !opts.allowUnconfirmed) {
-    throw new Error(
-      `${contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
-    );
-  }
+  const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
+  assertConfirmed(context, contextFile, opts.allowUnconfirmed);
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: new URL(research.site.url).hostname,
@@ -122,18 +116,27 @@ export async function filterRun(opts: FilterOptions): Promise<FilterResult> {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
     lines.push(...summarizeFilter(result));
-    lines.push(`queries     ${out}`);
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out
+      ? {
+          out,
+          outputs: { queries: out },
+          next: [
+            {
+              command: command("cluster", out),
+              note: "uses cached SERPs only; add --live-serp --budget <usd> to buy the missing ones",
+            },
+          ],
+        }
+      : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }
 
@@ -170,24 +173,28 @@ export interface FilterEvalSetScore extends FilterEvalScore {
 
 export async function filterEval(
   opts: FilterEvalOptions,
-): Promise<{ ok: boolean; scores: FilterEvalSetScore[]; lines: string[] }> {
+): Promise<CommandResult & { scores: FilterEvalSetScore[] }> {
   const env = opts.env ?? process.env;
   const minAccuracy = opts.minAccuracy ?? DEFAULT_MIN_ACCURACY;
   if (!(minAccuracy >= 0 && minAccuracy <= 1)) {
-    throw new Error(`--min-accuracy must be between 0 and 1, got ${opts.minAccuracy}`);
+    throw new MycelError(
+      "USAGE",
+      `--min-accuracy must be between 0 and 1, got ${opts.minAccuracy}`,
+    );
   }
   const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
   const scores: FilterEvalSetScore[] = [];
   const lines: string[] = [];
   let ok = true;
+  let crashed: unknown;
   for (const dir of opts.fixtures) {
-    const context = ClientContext.parse(readJson(join(dir, "context.json")));
+    const context = readInput(join(dir, "context.json"), ClientContext, CONTEXT_FILE);
     for (const { kind, file } of FILTER_EVAL_SETS) {
       if (kind === "held-out" && !existsSync(join(dir, file))) {
         lines.push(`${basename(dir).padEnd(24)} ${kind.padEnd(8)} no ${file}: not scored`);
         continue;
       }
-      const set = FilterEvalSet.parse(readJson(join(dir, file)));
+      const set = readInput(join(dir, file), FilterEvalSet, EVAL_SET);
       const run = RunStore.create({
         runsDir: opts.runsDir,
         client: set.client,
@@ -222,15 +229,27 @@ export async function filterEval(
         }
       } catch (err) {
         failure = err;
+        crashed ??= err;
         lines.push(`${set.client.padEnd(24)} ${kind.padEnd(8)} failed: ${(err as Error).message}`);
       }
       if (run.finish(failure).status !== "ok") ok = false;
     }
   }
-  if (scores.some((s) => !s.passed)) {
+  const below = scores.filter((s) => !s.passed);
+  if (below.length) {
     lines.push(
       "Below the pass mark. Fix the prompt or rules on the tuning set only; never fit them to the held-out misses.",
     );
   }
-  return { ok, scores, lines };
+  // A set that could not be scored is a failed run; a set that scored too low is a missed mark.
+  const failure =
+    crashed ??
+    (below.length
+      ? new MycelError(
+          "BELOW_PASS_MARK",
+          `${below.length} of ${scores.length} eval sets are below the pass mark of ${minAccuracy}`,
+          { fix: "see the misses above; tune on the tuning set only" },
+        )
+      : undefined);
+  return { ok, scores, lines, ...(failure !== undefined ? { failure } : {}) };
 }

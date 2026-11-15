@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FakeProvider, LlmClient, type LlmProvider, OllamaProvider } from "@mycel/connectors";
 import {
   CORE_VERSION,
   checkGate,
-  formatTimeline,
   type GateResult,
+  MycelError,
   mapShape,
   mapStep,
   type PageRef,
@@ -19,6 +19,10 @@ import {
   GateExpectations,
   type SiteMaps,
 } from "@mycel/schema";
+import { z } from "zod";
+import { CONTEXT_FILE, QUERIES_FILE } from "./cluster.ts";
+import { assertConfirmed, readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel map <clusters.json>` (issue #19, Koray steps 11-14 and 20). Thin shell around core's map
@@ -63,16 +67,14 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
   return [fake, ollama];
 }
 
-const readJson = (path: string) => {
-  if (!existsSync(path)) throw new Error(`no file at ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
-};
+const CLUSTERS_FILE = { name: "clusters file", writtenBy: "mycel cluster" };
+const PAGES_SOURCE = { name: "pages or research file", writtenBy: "mycel research" };
+const EXPECTATIONS = { name: "expectations file", writtenBy: "hand, in a fixture folder" };
 
 /** Pages from a pages.json (fixture or WordPress read) or a research.json. */
 function readPages(path: string): PageRef[] {
-  const raw = readJson(path) as { pages?: unknown };
-  if (!Array.isArray(raw.pages)) throw new Error(`${path} has no pages list`);
-  return raw.pages as PageRef[];
+  return readInput(path, z.object({ pages: z.array(z.unknown()) }), PAGES_SOURCE)
+    .pages as PageRef[];
 }
 
 export function summarizeMaps(d: SiteMaps): string[] {
@@ -138,36 +140,29 @@ export interface MapOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export interface MapResult {
+export interface MapResult extends CommandResult {
   runId: string;
-  ok: boolean;
   out?: string;
   gate?: GateResult;
-  lines: string[];
-  timeline: string;
 }
 
 export async function mapRun(opts: MapOptions): Promise<MapResult> {
   const env = opts.env ?? process.env;
   const dir = dirname(opts.clustersFile);
-  const clusters = ClusterSet.parse(readJson(opts.clustersFile));
+  const clusters = readInput(opts.clustersFile, ClusterSet, CLUSTERS_FILE);
   const contextFile = opts.contextFile ?? join(dir, "context.json");
-  const context = ClientContext.parse(readJson(contextFile));
-  if (!context.confirmed && !opts.allowUnconfirmed) {
-    throw new Error(
-      `${contextFile} isn't confirmed yet; run mycel context confirm first (or --allow-unconfirmed for a dry run)`,
-    );
-  }
+  const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
+  assertConfirmed(context, contextFile, opts.allowUnconfirmed);
   const queriesFile =
     opts.queriesFile ??
     (existsSync(join(dir, "queries.json")) ? join(dir, "queries.json") : undefined);
-  const queries = queriesFile ? FilteredQueries.parse(readJson(queriesFile)).queries : [];
+  const queries = queriesFile ? readInput(queriesFile, FilteredQueries, QUERIES_FILE).queries : [];
   const pagesFile =
     opts.pagesFile ??
     (existsSync(join(dir, "research.json")) ? join(dir, "research.json") : undefined);
   const pages = pagesFile ? readPages(pagesFile) : [];
   const expectations = opts.expectFile
-    ? GateExpectations.parse(readJson(opts.expectFile))
+    ? readInput(opts.expectFile, GateExpectations, EXPECTATIONS)
     : undefined;
 
   const run = RunStore.create({
@@ -212,18 +207,31 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
       });
       lines.push(...gateLines(gate));
     }
-    lines.push(`map         ${out}`);
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
+  // The run can be fine while the map misses its gate: that is a missed mark, not a crash.
+  if (failure === undefined && gate && !gate.passed) {
+    const missed = gate.checks.filter((c) => c.status === "fail").length;
+    failure = new MycelError(
+      "BELOW_PASS_MARK",
+      `the map misses ${missed} of ${gate.checks.length} gate checks`,
+      { fix: "the gate lines above say which; the map file is written so it can be inspected" },
+    );
+  }
   return {
     runId: run.runId,
     ok: meta.status === "ok" && (gate ? gate.passed : true),
-    ...(out ? { out } : {}),
-    ...(gate ? { gate } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out
+      ? {
+          out,
+          outputs: { map: out },
+          next: [{ note: `review ${out}: the map is the last step of the pipeline for now` }],
+        }
+      : {}),
+    ...(gate ? { gate } : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }
