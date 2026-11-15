@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
 import { Command, Option } from "commander";
+import { businessApply, businessPropose, businessScore, businessSimulate } from "./business.ts";
 import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
+import { evalMapRun } from "./eval-map.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
 import { DEFAULT_MIN_ACCURACY, filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
@@ -137,6 +139,132 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
         await contextConfirm(file, by, { print: out, ask: (p) => rl.question(p) });
       } finally {
         rl.close();
+      }
+    });
+
+  const business = program
+    .command("business")
+    .description(
+      "The business profile (issue #42): AI pre-fills it from the site and research, the owner confirms from an answers file",
+    );
+  business
+    .command("propose")
+    .description("Pre-fill the business profile from the site and research.json (no paid calls)")
+    .argument("<context>", "the client's context.json")
+    .requiredOption(
+      "--site <site>",
+      "site URL (WordPress REST API, cached) or a folder with pages.json",
+    )
+    .option(
+      "--research <file>",
+      "research.json with GSC, ranked and competitor searches (default: next to the context)",
+    )
+    .option(
+      "--out <file>",
+      "where to write it (default: business.proposed.json next to the context)",
+    )
+    .addOption(
+      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    )
+    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        contextFile: string,
+        opts: {
+          site: string;
+          research?: string;
+          out?: string;
+          provider: string;
+          model: string;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof businessPropose>>;
+        try {
+          res = await businessPropose({
+            runsDir,
+            contextFile,
+            site: opts.site,
+            provider: opts.provider,
+            model: opts.model,
+            ...(opts.research ? { researchFile: opts.research } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+  business
+    .command("apply")
+    .description(
+      "Confirm the profile with the owner's answers from a file (written from the setup); never asks in the terminal",
+    )
+    .argument("<proposed>", "business.proposed.json")
+    .requiredOption("--answers <file>", "the owner's answers (OwnerAnswers JSON)")
+    .option("--by <name>", "who answered; must match the file's by")
+    .option("--out <file>", "where to write it (default: business.json next to the proposal)")
+    .action((proposedFile: string, opts: { answers: string; by?: string; out?: string }) => {
+      try {
+        const res = businessApply({
+          proposedFile,
+          answersFile: opts.answers,
+          ...(opts.by ? { by: opts.by } : {}),
+          ...(opts.out ? { out: opts.out } : {}),
+        });
+        for (const l of res.lines) out(l);
+      } catch (err) {
+        out(`failed      ${(err as Error).message}`);
+        process.exitCode = 1;
+      }
+    });
+  business
+    .command("score")
+    .description("Score a profile against an answer key (a test client's business.key.json)")
+    .argument("<profile>", "business.proposed.json or business.json")
+    .requiredOption("--key <file>", "the answer key")
+    .option("--language <code>", "market language", "nl")
+    .action((profileFile: string, opts: { key: string; language: string }) => {
+      try {
+        for (const l of businessScore({ profileFile, keyFile: opts.key, language: opts.language })
+          .lines)
+          out(l);
+      } catch (err) {
+        out(`failed      ${(err as Error).message}`);
+        process.exitCode = 1;
+      }
+    });
+  business
+    .command("simulate")
+    .description("Play a test client's owner from its answer key: writes owner-answers.json")
+    .argument("<proposed>", "business.proposed.json")
+    .requiredOption("--key <file>", "the answer key")
+    .option("--language <code>", "market language", "nl")
+    .option(
+      "--out <file>",
+      "where to write the answers (default: owner-answers.json next to the proposal)",
+    )
+    .action((proposedFile: string, opts: { key: string; language: string; out?: string }) => {
+      try {
+        const res = businessSimulate({
+          proposedFile,
+          keyFile: opts.key,
+          language: opts.language,
+          ...(opts.out ? { out: opts.out } : {}),
+        });
+        for (const l of res.lines) out(l);
+      } catch (err) {
+        out(`failed      ${(err as Error).message}`);
+        process.exitCode = 1;
       }
     });
 
@@ -430,6 +558,57 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           return;
         }
         for (const l of res.lines) out(l);
+        if (!res.ok) process.exitCode = 1;
+      },
+    );
+  evals
+    .command("map")
+    .description(
+      "Score a topical map on the round-8 numbers (issue #42): duplicate intents, offer fit, first plan, existing pages. Cache only, no paid calls",
+    )
+    .argument("<map>", "topical-map.json written by mycel map")
+    .option("--context <file>", "the client's context (default: context.json next to the map)")
+    .option(
+      "--pages <file>",
+      "existing pages: pages.json or research.json (default: research.json next to the map)",
+    )
+    .option("--out <file>", "where to write the eval (default: map-eval.json next to the map)")
+    .option("--review", "also write the two reviewer prompts (SEO expert, owner)")
+    .option("--no-serps", "skip the SERP overlap check")
+    .option("--debug", "mirror logs to the console")
+    .action(
+      async (
+        mapFile: string,
+        opts: {
+          context?: string;
+          pages?: string;
+          out?: string;
+          review?: boolean;
+          serps: boolean;
+          debug?: boolean;
+        },
+      ) => {
+        const runsDir = program.opts<{ runsDir: string }>().runsDir;
+        let res: Awaited<ReturnType<typeof evalMapRun>>;
+        try {
+          res = await evalMapRun({
+            runsDir,
+            mapFile,
+            serps: opts.serps,
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.pages ? { pagesFile: opts.pages } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.review ? { review: true } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          });
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+        for (const l of res.lines) out(l);
+        out("");
+        out(res.timeline);
         if (!res.ok) process.exitCode = 1;
       },
     );

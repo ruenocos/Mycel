@@ -53,6 +53,8 @@ export const MapNode = z.object({
    * ("Projectplanning"), else a short title the model wrote from the main search.
    */
   name: z.string().min(1).optional(),
+  /** The business profile offering this page serves (issue #42); absent on support pages without one. */
+  offeringId: z.string().min(1).optional(),
   /** Koray raw node: entity + attribute, e.g. ERP + bouwbedrijven. */
   rawNode: z.object({ entity: z.string().min(1), attribute: z.string().min(1) }),
   /** One macro context per page. */

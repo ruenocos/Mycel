@@ -17,3 +17,4 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0011 | Quality yardstick: 23-step rubric + data checks; no staging until phase 5 |
 | 0012 | DeepSeek V4.1 Flash writes the Dutch content (writing test #12)           |
 | 0013 | English inside (prompts, reasoning, step data), market language out       |
+| 0014 | Business profile first: AI fills in with proof, the owner confirms       |
