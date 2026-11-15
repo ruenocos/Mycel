@@ -924,7 +924,7 @@ describe("matchPages", () => {
 });
 
 describe("finishMaps", () => {
-  it("falls back to data when a label is empty", () => {
+  it("falls back to a plain market-language sentence from data when a label is empty", () => {
     const plan = planMaps({ context, clusters, queries });
     const maps = finishMaps({
       plan,
@@ -934,7 +934,9 @@ describe("finishMaps", () => {
       costUsd: 0,
     });
     const n = maps.maps[0]?.nodes.find((x) => x.mainQuery === "kamerplant verpotten");
-    expect(n?.why).toBe("Its own results page, so its own page.");
+    expect(n?.why).toBe(
+      'Op "kamerplant verpotten" wordt ongeveer 1.500 keer per maand gezocht door mensen met een vraag die deze pagina beantwoordt.',
+    );
     expect(n?.rawNode).toEqual({ entity: "kamerplant", attribute: "kamerplant verpotten" });
   });
 });

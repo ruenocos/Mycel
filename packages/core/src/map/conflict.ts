@@ -2,7 +2,7 @@ import type { ClientContext, SiteMaps } from "@mycel/schema";
 import { z } from "zod";
 import type { JsonModel } from "../context/llm.ts";
 import type { StepContext } from "../log/run-store.ts";
-import type { PageRef } from "./site.ts";
+import type { PageRef, PageScore } from "./site.ts";
 
 /**
  * Cannibalisation advice (Koray step 15). Data finds the pages that compete for one search; only
@@ -10,6 +10,28 @@ import type { PageRef } from "./site.ts";
  * merge) or two different pages that touch the same search (two sector pages, a care guide on
  * repotting and one on winter care: keep both and give each its own angle).
  */
+
+/**
+ * Pages that compete for a node by their words alone, so a conflict doesn't depend on how the
+ * model linked them (issue #42): another existing page whose title, H1 and URL hold every word
+ * of one of the node's searches, and whose own topic (H1) that search covers for at least half.
+ * Hub nodes are left out: a section page and the articles under it share the head term by design.
+ */
+export function wordRivals(input: {
+  nodes: { id: string; isRoot: boolean; hub: boolean; page?: string }[];
+  scores: Map<string, Map<string, PageScore>>;
+}): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const n of input.nodes) {
+    if (n.isRoot || n.hub || !n.page) continue;
+    for (const [url, perNode] of input.scores) {
+      const s = perNode.get(n.id);
+      if (url === n.page || !s || s.score < 0.999 || s.h1 < 0.5) continue;
+      out.set(n.id, [...(out.get(n.id) ?? []), url]);
+    }
+  }
+  return out;
+}
 
 export const CONFLICT_TEMPLATE = { id: "map-conflict", version: "1" } as const;
 

@@ -12,9 +12,12 @@ import {
 } from "@mycel/schema";
 import { z } from "zod";
 import { type ClusterSerp, overlapKeys, type SerpBatchPort } from "../cluster/cluster.ts";
+import { checkText, claimFacts } from "../map/check.ts";
 import { tokens } from "../map/plan.ts";
 import { SKIP_KINDS } from "../map/rules.ts";
 import { isHome, type PageRef } from "../map/site.ts";
+import { slugify } from "../map/urls.ts";
+import { topOfferings } from "../map/value.ts";
 import { defineStep } from "../step.ts";
 
 /**
@@ -23,7 +26,8 @@ import { defineStep } from "../step.ts";
  * Without a business profile the offer numbers fall back to the context's offering phrases.
  */
 
-export const MAP_EVAL_VERSION = "1";
+/** 2: page jobs from the map's inventory, the fact check, slug words, top offerings as the plan sees them. */
+export const MAP_EVAL_VERSION = "2";
 const MAX_EXAMPLES = 8;
 
 type Node = MapNode;
@@ -139,9 +143,17 @@ export function evalMap(input: MapEvalInput): MapEval {
     return noGo.some((g) => covers(words, g.key));
   });
 
-  // 4. First-plan steps that neither fix a conflict nor serve a top offering.
+  // 4. First-plan steps that neither fix a conflict nor serve a top offering (at most three,
+  // as the plan picks them: value.ts topOfferings).
+  const demand = new Map<string, number>();
+  for (const n of real) {
+    const o = offerOf(n, all, lang);
+    if (o) demand.set(o.id, (demand.get(o.id) ?? 0) + (n.demand.volume ?? 0));
+  }
+  const topIds = topOfferings(profile, demand);
+  const isTop = (o: Offer | undefined) => !!o && (profile ? topIds.has(o.id) : o.top);
   const now = real.filter((n) => n.wave === "now");
-  const untied = now.filter((n) => n.action !== "resolve" && !offerOf(n, all, lang)?.top);
+  const untied = now.filter((n) => n.action !== "resolve" && !isTop(offerOf(n, all, lang)));
 
   // 5. Existing pages outside the map while a new page is planned on the same search.
   const creates = real.filter((n) => n.action === "create");
@@ -152,9 +164,13 @@ export function evalMap(input: MapEvalInput): MapEval {
     if (twin) twins.push(`${p.url} ~ ${label(twin)}`);
   }
 
-  // 6. Existing pages that have a job in the map.
+  // 6. Existing pages that have a job in the map: the map's own inventory (step 5) when it has
+  // one, else the pages on a node or in a conflict.
   const linkable = pages.filter((p) => !isHome(p) && !SKIP_KINDS.has(p.kind));
   const used = new Set<string>();
+  if (maps.inventory) {
+    for (const e of maps.inventory) if (e.job !== "outside") used.add(e.url);
+  }
   for (const n of nodes) {
     if (n.existingPage) used.add(n.existingPage.url);
     for (const u of n.conflict?.urls ?? []) used.add(u);
@@ -173,6 +189,24 @@ export function evalMap(input: MapEvalInput): MapEval {
     return f !== undefined && !n.proposedUrl.startsWith(f);
   });
   const noSections = { note: "map made before site sections" };
+
+  // 8. Fact check (step 7): names and why-texts claim only what the profile holds.
+  const claims: string[] = [];
+  for (const n of real) {
+    const facts = claimFacts(context, [n.mainQuery, ...n.queries]);
+    for (const text of [n.name, n.why]) {
+      const problems = text ? checkText(text, facts) : [];
+      if (problems.length) claims.push(`${label(n)}: ${problems.join("; ")}`);
+    }
+  }
+  // 9. Slugs: every word of a new page's last URL segment is in its name or its searches.
+  const offSlugs = creates.filter((n) => {
+    const seg = n.proposedUrl.split("/").filter(Boolean).at(-1) ?? "";
+    const allowed = new Set(
+      [n.name ?? "", n.mainQuery, ...n.queries].flatMap((t) => slugify(t).split("-")),
+    );
+    return seg.split("-").some((w) => w && !/^\d+$/.test(w) && !allowed.has(w));
+  });
 
   const count = (xs: Node[], key: (n: Node) => string | undefined) => {
     const out: Record<string, number> = {};
@@ -218,7 +252,12 @@ export function evalMap(input: MapEvalInput): MapEval {
         { of: linkable.length },
       ),
       newPages: metric(creates.length, []),
-      claimFailures: metric(null, [], { note: "measured from step 7 (fact check)" }),
+      claimFailures: metric(claims.length, claims, { of: real.length * 2 }),
+      slugsOffText: metric(
+        offSlugs.length,
+        offSlugs.map((n) => n.proposedUrl),
+        { of: creates.length },
+      ),
       pagesWithoutSection: metric(
         sectionList ? unsectioned.length : null,
         unsectioned.map(label),

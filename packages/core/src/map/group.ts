@@ -188,10 +188,8 @@ function themeNode(
     intent: { main: main as NodeDraft["intent"]["main"], mixed: false, source: "tier" },
     aiOverview: null,
     hub: "theme",
-    // Shown to the owner when the model gave no sentence; the model's line is in their language.
-    qdpWhy:
-      why && why.length >= 10
-        ? why
-        : `A hub page that groups ${members.length} pages on one theme, so visitors and search engines find them together instead of in one long list.`,
+    // The model's line, in the owner's language; empty when it gave none, so the finish writes a
+    // plain one from data (check.ts plainWhy).
+    qdpWhy: why && why.length >= 10 ? why : "",
   };
 }

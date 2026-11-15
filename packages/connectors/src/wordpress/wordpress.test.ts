@@ -34,6 +34,7 @@ const types = {
     rest_namespace: "wp/v2",
   },
   dienst: { slug: "dienst", name: "Diensten", rest_base: "dienst", rest_namespace: "wp/v2" },
+  product: { slug: "product", name: "Producten", rest_base: "product", rest_namespace: "wp/v2" },
 };
 
 const MENU = `<ul class="menu">
@@ -61,7 +62,25 @@ function fakeSite(): { fetchImpl: typeof fetch; urls: string[] } {
     if (u.pathname === "/") return new Response(`<html lang="nl-NL"><body>${MENU}</body></html>`);
     if (u.pathname.endsWith("/categories"))
       return json([{ id: 3, name: "Business &amp; ERP" }], { "x-wp-totalpages": "1" });
+    if (u.pathname.endsWith("/product_cat"))
+      return json([{ id: 7, name: "Grote planten" }], { "x-wp-totalpages": "1" });
     if (u.pathname.endsWith("/types")) return json(types);
+    if (u.pathname.endsWith("/product")) {
+      return json(
+        [
+          {
+            id: 30,
+            type: "product",
+            slug: "monstera",
+            link: "https://site.test/product/monstera/",
+            product_cat: [7],
+            title: { rendered: "Monstera" },
+            content: { rendered: "<p>Een grote plant.</p>" },
+          },
+        ],
+        { "x-wp-totalpages": "1" },
+      );
+    }
     const page = Number(u.searchParams.get("page"));
     if (u.pathname.endsWith("/pages")) {
       return json(
@@ -170,6 +189,7 @@ describe("WordPressClient", () => {
       "/blog/erp/p1/",
       "/blog/erp/p2/",
       "/dienst/implementatie/",
+      "/product/monstera/",
     ]);
     const home = site.pages.find((p) => p.url === "/");
     expect(home).toMatchObject({
@@ -193,7 +213,19 @@ describe("WordPressClient", () => {
       },
       { key: "page", name: "Pagina’s", folder: "/", source: "post_type", categories: [] },
       { key: "dienst", name: "Dienst", folder: "/dienst/", source: "post_type", categories: [] },
+      {
+        key: "product",
+        name: "Product",
+        folder: "/product/",
+        source: "post_type",
+        categories: [{ name: "Grote planten" }],
+      },
     ]);
+    // A WooCommerce product keeps its shop category (product_cat), so it can support that page.
+    expect(site.pages.find((p) => p.url === "/product/monstera/")).toMatchObject({
+      section: "product",
+      category: "Grote planten",
+    });
     expect(site.pages.find((p) => p.url === "/blog/erp/p1/")).toMatchObject({
       section: "post",
       category: "Business & ERP",
