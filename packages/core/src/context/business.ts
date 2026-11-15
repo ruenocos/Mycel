@@ -11,6 +11,7 @@ import {
   type Source,
 } from "@mycel/schema";
 import { z } from "zod";
+import { variantKey } from "../cluster/cluster.ts";
 import { languageName } from "../evals/writing.ts";
 import { tokens } from "../map/plan.ts";
 import { slugify } from "../map/urls.ts";
@@ -24,7 +25,7 @@ import type { JsonModel } from "./llm.ts";
  * search evidence comes from the research dataset that is already on disk.
  */
 
-export const BUSINESS_TEMPLATE = { id: "business-propose", version: "2" } as const;
+export const BUSINESS_TEMPLATE = { id: "business-propose", version: "3" } as const;
 
 /** Kinds whose body text says what the business offers, in reading order. */
 const OFFER_KINDS = [
@@ -234,6 +235,7 @@ export function buildBusinessMessages(
     "You build a precise business profile for an SEO topical map. Every later decision checks against it: which pages may exist, which places are served, which facts a page may claim.",
     "Use only the evidence given. Every item cites the evidence ids that prove it. If nothing proves a field, leave it empty: an empty field is asked to the owner later; a guess is a defect.",
     "Be specific: split broad offers into the sub-offerings the site names, and list attributes the site uses to tell variants apart (type, size, sector, material, location, price class).",
+    "Free downloads, guides, demos, intro calls and quotes are how a visitor converts, not what the business sells: put them in conversion, never in offerings.",
     "notOffered only lists what the evidence says the business does NOT do (e.g. 'no home visits'). Never infer it from silence.",
     "Searches only competitors rank for are not facts about this business: turn the ones that look like a real offer into openQuestions ('Do you offer X?'). Never add them as offerings.",
     `Write values in ${lang} (${ctx.market.language}) as the site writes them. Keep names, product names and terms exactly as the evidence uses them.`,
@@ -354,9 +356,14 @@ export function toBusinessProfile(
   // An offering the owner confirmed earlier but the site doesn't show: ask, don't drop.
   const lang = ctx.market.language;
   const words = offerings.map((o) => tokens([o.name, ...o.subOfferings].join(" "), lang));
+  const names = offerings.flatMap((o) => [o.name, ...o.subOfferings].map((s) => tokens(s, lang)));
   for (const o of ctx.offerings) {
     const t = tokens(o, lang);
-    if (t.size && !words.some((w) => [...t].every((x) => w.has(x)))) questions.push(o);
+    if (!t.size) continue;
+    // "De Saak DMS voor documentmanagement" is covered by an offering named "De Saak DMS".
+    const covered =
+      words.some((w) => within(t, w)) || names.some((k) => k.size >= 2 && within(k, t));
+    if (!covered) questions.push(o);
   }
   const keep = <T extends { evidence: string[] }>(xs: T[], what: (x: T) => string) =>
     xs
@@ -471,14 +478,31 @@ export function applyOwnerAnswers(
 ): BusinessProfile {
   const a = OwnerAnswersSchema.parse(input);
   const removed = new Set(a.removed);
+  const into = new Map(
+    a.merged.filter((m) => m.id !== m.into && !removed.has(m.into)).map((m) => [m.id, m.into]),
+  );
+  const folded = new Map<string, Offering[]>();
+  for (const o of p.offerings) {
+    const target = into.get(o.id);
+    if (target) folded.set(target, [...(folded.get(target) ?? []), o]);
+  }
   const top = new Set(a.top);
   const edits = new Map(a.edits.map((e) => [e.id, e.set]));
   const offerings: Offering[] = [];
   const ids = new Set<string>();
   for (const o of p.offerings) {
-    if (removed.has(o.id)) continue;
+    if (removed.has(o.id) || into.has(o.id)) continue;
     const set = edits.get(o.id);
+    const parts = folded.get(o.id) ?? [];
     const merged = { ...o, ...(set ?? {}) } as Offering;
+    if (parts.length) {
+      merged.subOfferings = uniq([
+        ...merged.subOfferings,
+        ...parts.flatMap((x) => [x.name, ...x.subOfferings]),
+      ]);
+      merged.sources = [...merged.sources, ...parts.flatMap((x) => x.sources)];
+      if (!top.size && parts.some((x) => x.value === "top")) merged.value = "top";
+    }
     const value = top.size
       ? top.has(o.id)
         ? "top"
@@ -489,8 +513,8 @@ export function applyOwnerAnswers(
     const next = {
       ...merged,
       value,
-      sources: set ? [...o.sources, owner] : o.sources,
-      status: set ? ("edited" as const) : ("confirmed" as const),
+      sources: set || parts.length ? [...merged.sources, owner] : o.sources,
+      status: set || parts.length ? ("edited" as const) : ("confirmed" as const),
     };
     offerings.push({ ...next, unknown: unknownFields(next) });
     ids.add(o.id);
@@ -557,13 +581,38 @@ export function applyOwnerAnswers(
 const nameKeys = (o: Pick<Offering, "name" | "subOfferings">, lang: string) =>
   [o.name, ...o.subOfferings].map((s) => tokens(s, lang)).filter((t) => t.size > 0);
 
+const within = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].every((x) => b.has(x));
+
 const sameOffer = (a: Offering, b: Offering, lang: string) => {
-  const ka = nameKeys(a, lang);
-  const kb = tokens(b.name, lang);
   const ta = tokens(a.name, lang);
+  const tb = tokens(b.name, lang);
   return (
-    ka.some((k) => [...k].every((x) => kb.has(x))) ||
-    nameKeys(b, lang).some((k) => [...k].every((x) => ta.has(x)))
+    nameKeys(a, lang).some((k) => within(k, tb)) || nameKeys(b, lang).some((k) => within(k, ta))
+  );
+};
+
+/**
+ * For the simulated owner only: a proposed word also matches a key word that is a compound ending
+ * in it ("planten" ~ "kamerplanten"), never the other way ("bekkenfysiotherapie" is not the
+ * owner's "fysiotherapie"). Scoring stays strict.
+ */
+const like = (proposedWord: string, keyWord: string) =>
+  proposedWord === keyWord || (proposedWord.length >= 4 && keyWord.endsWith(proposedWord));
+const covered = (keyWords: Set<string>, proposedWords: Set<string>) =>
+  keyWords.size > 0 && [...keyWords].every((k) => [...proposedWords].some((p) => like(p, k)));
+const covering = (proposedWords: Set<string>, keyWords: Set<string>) =>
+  proposedWords.size > 0 && [...proposedWords].every((p) => [...keyWords].some((k) => like(p, k)));
+
+const sameNameLoose = (g: Offering, k: Offering, lang: string) => {
+  const tg = tokens(g.name, lang);
+  const tk = tokens(k.name, lang);
+  return covering(tg, tk) && covered(tk, tg);
+};
+const sameOfferLoose = (g: Offering, k: Offering, lang: string) => {
+  const tg = tokens(g.name, lang);
+  const tk = tokens(k.name, lang);
+  return (
+    nameKeys(g, lang).some((w) => covering(w, tk)) || nameKeys(k, lang).some((w) => covered(w, tg))
   );
 };
 
@@ -654,16 +703,33 @@ export function simulateOwner(
   at = "2026-11-15T00:00:00.000Z",
 ): OwnerAnswers {
   const removed: string[] = [];
+  const merged: OwnerAnswers["merged"] = [];
   const edits: OwnerAnswers["edits"] = [];
   const top: string[] = [];
-  const matched = new Set<Offering>();
+  // Which proposed offering stands for each key offering: same name first, then any overlap.
+  const heldBy = new Map<Offering, Offering>();
+  const rest: Offering[] = [];
+  const exact = (g: Offering, x: Offering) =>
+    variantKey(g.name, language) === variantKey(x.name, language);
+  const loose: Offering[] = [];
   for (const g of proposed.offerings) {
-    const k = key.offerings.find((x) => !matched.has(x) && sameOffer(g, x, language));
-    if (!k) {
-      removed.push(g.id);
-      continue;
-    }
-    matched.add(k);
+    const k = key.offerings.find((x) => !heldBy.has(x) && exact(g, x));
+    if (k) heldBy.set(k, g);
+    else loose.push(g);
+  }
+  for (const g of loose) {
+    const k = key.offerings.find((x) => !heldBy.has(x) && sameNameLoose(g, x, language));
+    if (k) heldBy.set(k, g);
+    else rest.push(g);
+  }
+  for (const g of rest) {
+    const k = key.offerings.find((x) => sameOfferLoose(g, x, language));
+    const holder = k && heldBy.get(k);
+    if (!k) removed.push(g.id);
+    else if (holder) merged.push({ id: g.id, into: holder.id });
+    else heldBy.set(k, g);
+  }
+  for (const [k, g] of heldBy) {
     const set: OwnerAnswers["edits"][number]["set"] = {};
     for (const f of g.unknown) {
       if (f === "attributes" && k.attributes.length) set.attributes = k.attributes;
@@ -674,6 +740,7 @@ export function simulateOwner(
     if (Object.keys(set).length) edits.push({ id: g.id, set });
     if (k.value === "top") top.push(g.id);
   }
+  const matched = new Set(heldBy.keys());
   const added = key.offerings
     .filter((k) => !matched.has(k))
     .map(({ sources: _s, status: _st, unknown: _u, ...rest }) => rest);
@@ -682,6 +749,7 @@ export function simulateOwner(
     by,
     at,
     removed,
+    merged,
     edits,
     added,
     top,

@@ -249,24 +249,31 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .argument("<proposed>", "business.proposed.json")
     .requiredOption("--key <file>", "the answer key")
     .option("--language <code>", "market language", "nl")
+    .option("--by <name>", "who plays the owner (recorded in the answers)")
     .option(
       "--out <file>",
       "where to write the answers (default: owner-answers.json next to the proposal)",
     )
-    .action((proposedFile: string, opts: { key: string; language: string; out?: string }) => {
-      try {
-        const res = businessSimulate({
-          proposedFile,
-          keyFile: opts.key,
-          language: opts.language,
-          ...(opts.out ? { out: opts.out } : {}),
-        });
-        for (const l of res.lines) out(l);
-      } catch (err) {
-        out(`failed      ${(err as Error).message}`);
-        process.exitCode = 1;
-      }
-    });
+    .action(
+      (
+        proposedFile: string,
+        opts: { key: string; language: string; by?: string; out?: string },
+      ) => {
+        try {
+          const res = businessSimulate({
+            proposedFile,
+            keyFile: opts.key,
+            language: opts.language,
+            ...(opts.by ? { by: opts.by } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+          });
+          for (const l of res.lines) out(l);
+        } catch (err) {
+          out(`failed      ${(err as Error).message}`);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command("research")

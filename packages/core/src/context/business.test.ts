@@ -189,6 +189,46 @@ describe("business profile", () => {
     ]);
   });
 
+  it("the simulated owner folds parts into their offering instead of calling them not offered", () => {
+    const offer = (name: string, subOfferings: string[] = []) => ({
+      id: name.toLowerCase().replace(/\s+/g, "-"),
+      name,
+      kind: "product_category",
+      subOfferings,
+      sources: [{ from: "site", ref: "/" }],
+    });
+    const proposed = BusinessProfile.parse({
+      offerings: [
+        offer("Bruidstaarten"),
+        offer("Taarten"),
+        offer("Vegan gebak"),
+        offer("Bakcursussen"),
+      ],
+    });
+    const answerKey = BusinessProfile.parse({
+      offerings: [offer("taarten", ["bruidstaarten"]), offer("vegan zoetigheden en gebak")],
+      notOffered: [{ name: "bakcursussen", sources: [{ from: "owner" }] }],
+    });
+    const answers = simulateOwner(proposed, answerKey, "nl");
+    expect(answers.merged).toEqual([{ id: "bruidstaarten", into: "taarten" }]);
+    expect(answers.removed).toEqual(["bakcursussen"]);
+    expect(answers.added).toEqual([]);
+    const done = applyOwnerAnswers(proposed, answers);
+    expect(done.offerings.map((o) => [o.id, o.subOfferings])).toEqual([
+      ["taarten", ["Bruidstaarten"]],
+      ["vegan-gebak", []],
+    ]);
+    expect(done.notOffered.map((n) => n.name)).toEqual(["Bakcursussen"]);
+  });
+
+  it("doesn't ask about an offering the owner named earlier when the site has it", () => {
+    const { profile } = toBusinessProfile(proposal(), evidence, {
+      ...ctx,
+      offerings: [...ctx.offerings, "Dry needling bij nekklachten"],
+    });
+    expect(profile.openQuestions.join(" ")).not.toContain("nekklachten");
+  });
+
   it("scores against the answer key, and a simulated owner closes the gap", () => {
     const k = key("praktijk-beweegruimte");
     const { profile } = toBusinessProfile(proposal(), evidence, ctx);

@@ -228,19 +228,21 @@ export function businessSimulate(opts: {
   proposedFile: string;
   keyFile: string;
   language: string;
+  by?: string;
   out?: string;
 }) {
   const answers = simulateOwner(
     readProfile(opts.proposedFile),
     readProfile(opts.keyFile),
     opts.language,
+    ...(opts.by ? [opts.by] : []),
   );
   const out = opts.out ?? join(dirname(opts.proposedFile), "owner-answers.json");
   writeJson(out, answers);
   return {
     out,
     lines: [
-      `owner       ${answers.removed.length} removed, ${answers.edits.length} filled in, ${answers.added.length} added, top: ${answers.top.join(", ") || "none"}`,
+      `owner       ${answers.removed.length} removed, ${answers.merged.length} merged into another, ${answers.edits.length} filled in, ${answers.added.length} added, top: ${answers.top.join(", ") || "none"}`,
       `answers     ${out}`,
     ],
   };

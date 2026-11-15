@@ -129,6 +129,11 @@ export const OwnerAnswers = z.object({
   at: z.iso.datetime(),
   /** Offering ids the owner removed: they move to notOffered. */
   removed: z.array(z.string()).default([]),
+  /**
+   * Offerings that are part of another one ("XL kamerplanten" under "grote kamerplanten"): the
+   * offering folds into `into` as a sub-offering. Not the same as removed: it is still offered.
+   */
+  merged: z.array(z.object({ id: z.string().min(1), into: z.string().min(1) })).default([]),
   /** Field edits per offering id; only the fields given are replaced. */
   edits: z
     .array(
