@@ -22,7 +22,7 @@ import { type PageRef, pageTitle } from "./site.ts";
  * another page. It never adds pages, queries or numbers.
  */
 
-export const MAP_TEMPLATE = { id: "map-label", version: "8" } as const;
+export const MAP_TEMPLATE = { id: "map-label", version: "9" } as const;
 
 export const LabelAnswer = z.object({
   results: z.array(
@@ -51,6 +51,7 @@ export function buildLabelMessages(
   hubs: NodeDraft[],
   byId: Map<string, NodeDraft>,
   locations: string[] = [],
+  serves: string[] = [],
 ) {
   const lang = languageName(ctx.market.language);
   const hubKey = new Map(hubs.map((h, i) => [h.id, `h${i}`]));
@@ -61,7 +62,7 @@ export function buildLabelMessages(
     `- "macroContext": in ${lang}, one sentence that describes the single main angle of the page, so two pages never cover the same thing. Describe it neutrally; don't address anyone.`,
     `- "why": in ${lang}, one plain sentence for the business owner: why this deserves its own page, and why it is core (close to what they sell) or outer (supporting knowledge). Use the given data (queries, volume, intent); no jargon. Address the owner with the informal singular "you" every time; never the plural "you", and never speak as the business ("we", "our"). State only facts from the profile and the page data: never say the business has a location, price, service or experience the profile doesn't list.`,
     `- "name": in ${lang}, a short title for the page (2 to 6 words) as a visitor would read it in a menu or heading: natural word order and correct spelling, not the raw search ("Citroenplant", not "citroen plant kopen online"). Keep a term of art as people write it ("Business Central").`,
-    `- "drop": leave it out unless the page clearly doesn't belong in this business's map. Then give one reason: "other_business" (the search is for another named business, brand, website or person), "place_not_served" (it names a town, neighbourhood or street where the business has no location: the profile lists its market and its locations; a neighbourhood or street of the market city without a location counts too, however many people search for it), "off_offer" (it has nothing to do with what the business offers or what its customers ask: a general term from another field, a do-it-yourself or retail product search for a service business). When unsure, leave it out.`,
+    `- "drop": leave it out unless the page clearly doesn't belong in this business's map. Then give one reason: "other_business" (the search is for another named business, brand, website or person), "place_not_served" (it names a town, neighbourhood or street where the business has no location: the profile lists its market and its locations; a neighbourhood or street of the market city without a location counts too, however many people search for it; "servesAreas" are areas customers come from, not locations, so serving a city or region never covers a page for one of its neighbourhoods or streets), "off_offer" (it has nothing to do with what the business offers or what its customers ask: a general term from another field, a do-it-yourself or retail product search for a service business). When unsure, leave it out.`,
     `- "parent": required for every page marked topLevel, never null. Pick the hub this page belongs under, from the hub list (its id, e.g. "h3"). Hubs marked "site" are sections the business's website already has (a service, product category or location): prefer them whenever the page is part of that topic, so new pages slot into the existing site. Choose "root" (directly under "${entity}") only when the page is itself a main pillar of the business, a main service, product category or theme that other pages will hang under; a page about one question, one detail or one variant is never root. A core page never goes under an outer hub. Never pick the page itself.`,
     ...(ctx.business
       ? [
@@ -90,6 +91,7 @@ export function buildLabelMessages(
       : {}),
     audiences: ctx.audiences,
     ...(locations.length ? { locations } : {}),
+    ...(serves.length ? { servesAreas: serves } : {}),
     ...(ctx.business?.places.nationwide ? { servesWholeCountry: true } : {}),
   };
   const offeringName = new Map((ctx.business?.offerings ?? []).map((o) => [o.id, o.name]));
@@ -148,9 +150,10 @@ export async function labelPlan(
         .map((p) => pageTitle(p, plan.context.site.name))
         .filter(Boolean),
       ...(places?.locations.map((l) => `${l.name} (${l.city})`) ?? []),
-      ...(places && !places.nationwide ? places.serves : []),
     ]),
   ];
+  // Areas it serves are not locations: a neighbourhood of a served city still needs a location.
+  const serves = places && !places.nationwide ? [...new Set(places.serves)] : [];
   const work: {
     entity: string;
     batch: NodeDraft[];
@@ -180,7 +183,15 @@ export async function labelPlan(
       {
         model: opts.model,
         template: MAP_TEMPLATE,
-        messages: buildLabelMessages(plan.context, w.entity, w.batch, w.hubs, w.byId, locations),
+        messages: buildLabelMessages(
+          plan.context,
+          w.entity,
+          w.batch,
+          w.hubs,
+          w.byId,
+          locations,
+          serves,
+        ),
         params: { temperature: 0, seed },
       },
       LabelAnswer,

@@ -279,6 +279,11 @@ describe("mapStep with a business profile", () => {
     expect(map.leftOut.map((l) => l.mainQuery)).toContain("fiets lease");
     // The gate's pages never reach the model.
     expect(prompts.some((p) => p.includes('"page": "fiets lease"'))).toBe(false);
+    // Areas it serves are not locations: the model must not read "serves Zwolle" as a
+    // location in every Zwolle neighbourhood.
+    const labelPrompt = prompts.find((p) => p.includes("\nPages:\n")) ?? "";
+    expect(labelPrompt).toContain('"servesAreas"');
+    expect(labelPrompt).toMatch(/"locations": \[\s*"Werkplaats \(Zwolle\)"\s*\]/);
     // Every core page sells an offering, except the business itself in its town.
     const core = map.nodes.filter(
       (n) => n.section === "core" && n.level !== "root" && n.mainQuery !== "fiets zwolle",
