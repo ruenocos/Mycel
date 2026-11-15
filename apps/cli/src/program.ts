@@ -515,8 +515,8 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
     .option("--queries <file>", "queries.json for intent and CPC (default: next to clusters)")
     .option("--context <file>", "the confirmed context (default: context.json next to clusters)")
     .option(
-      "--pages <file>",
-      "existing pages: pages.json or research.json (default: research.json next to clusters)",
+      "--pages <file|url>",
+      "existing pages: pages.json, research.json or the site's URL (WordPress, read live and free; default: research.json next to clusters)",
     )
     .option("--expect <file>", "a test client's expectations.json: check the map against it")
     .option("--out <file>", "where to write the map (default: topical-map.json next to clusters)")

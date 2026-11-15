@@ -115,5 +115,22 @@
       "h1": "Offerte aanvragen",
       "text": "Vraag een gratis inspectie aan. We komen langs, maken foto's van het dak en sturen binnen 48 uur een offerte."
     }
+  ],
+  "menu": [
+    {
+      "label": "Diensten",
+      "urls": [
+        "/dakreparatie/",
+        "/daklekkage/",
+        "/plat-dak/",
+        "/pannendak/",
+        "/dakgoten/",
+        "/dakisolatie/"
+      ]
+    },
+    {
+      "label": "Werkgebied",
+      "urls": ["/werkgebied/rotterdam/", "/werkgebied/schiedam/"]
+    }
   ]
 }

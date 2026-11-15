@@ -550,6 +550,27 @@ describe("mapStep", () => {
     expect(gele.proposedUrl).toBe("/verzorging/gele-bladeren-kamerplant/");
   });
 
+  it("gives every page a site section and puts new pages in its folder (issue #51)", async () => {
+    const maps = await runStep(newRun(), mapStep(stub()), {
+      context,
+      clusters,
+      queries,
+      pages,
+      model: "fake",
+    });
+    const sections = maps.siteSections ?? [];
+    expect(sections.find((x) => x.key === "verzorging")).toMatchObject({
+      folder: "/verzorging/",
+      role: "knowledge",
+    });
+    const nodes = maps.maps.flatMap((m) => m.nodes).filter((n) => n.level !== "root");
+    expect(nodes.every((n) => n.siteSection)).toBe(true);
+    for (const n of nodes.filter((x) => !x.existingPage && !x.siteSection?.suggested)) {
+      const folder = sections.find((x) => x.key === n.siteSection?.key)?.folder;
+      expect(n.proposedUrl.startsWith(folder ?? "?"), `${n.proposedUrl} in ${folder}`).toBe(true);
+    }
+  });
+
   it("offers the site's own sections first as hubs, marked, and never asks to move them", async () => {
     const model = stub();
     await runStep(newRun(), mapStep(model), { context, clusters, queries, pages, model: "fake" });

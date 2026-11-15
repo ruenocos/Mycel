@@ -241,3 +241,40 @@ describe("evalMap", () => {
     expect(prompt).toContain('"overall"');
   });
 });
+
+describe("evalMap: site sections (issue #51)", () => {
+  it("counts pages without a section and new pages outside their section's folder", () => {
+    const sec = (key: string, name: string) => ({ key, name, why: "rule" });
+    const m: SiteMaps = {
+      ...maps([
+        node("dry-needling-nek", {
+          proposedUrl: "/behandelingen/dry-needling-nek/",
+          siteSection: sec("behandelingen", "Behandelingen"),
+        }),
+        node("wat-is-dry-needling", {
+          proposedUrl: "/wat-is-dry-needling/",
+          siteSection: sec("blog", "Blog"),
+        }),
+        node("fysio-lombok"),
+      ]),
+      siteSections: [
+        {
+          key: "behandelingen",
+          name: "Behandelingen",
+          folder: "/behandelingen/",
+          source: "folder",
+          categories: [],
+        },
+        { key: "blog", name: "Blog", folder: "/blog/", source: "folder", categories: [] },
+      ],
+    };
+    const e = run(m);
+    expect(e.metrics.pagesWithoutSection).toMatchObject({ value: 1, examples: ["fysio lombok"] });
+    expect(e.metrics.newOutsideSectionFolder).toMatchObject({
+      value: 1,
+      examples: ["/wat-is-dry-needling/ (Blog)"],
+    });
+    // A map made before site sections isn't scored on them.
+    expect(run(maps([node("x")])).metrics.pagesWithoutSection.value).toBeNull();
+  });
+});

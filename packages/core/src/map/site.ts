@@ -11,7 +11,8 @@ import { slugify } from "./urls.ts";
  */
 
 /** What page linking needs from an existing page; research.json keeps exactly these fields. */
-export type PageRef = Pick<SitePage, "url" | "kind" | "title" | "h1">;
+export type PageRef = Pick<SitePage, "url" | "kind" | "title" | "h1"> &
+  Partial<Pick<SitePage, "section" | "category">>;
 
 export const isHome = (p: PageRef) => p.kind === "home" || p.url === "/";
 

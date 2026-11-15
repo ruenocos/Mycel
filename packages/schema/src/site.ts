@@ -27,14 +27,68 @@ export const SitePage = z.object({
   metaDescription: z.string().min(1).optional(),
   /** The first lines of body text: enough to judge what the page is about. */
   text: z.string().min(1),
+  /** Key of the site section the page lives in (a SiteSection's key), when the reader knows it. */
+  section: z.string().min(1).optional(),
+  /** The page's category inside its section (a blog category), in the site's own words. */
+  category: z.string().min(1).optional(),
 });
 export type SitePage = z.infer<typeof SitePage>;
+
+/**
+ * Generic job of a site section (issue #51), whatever the site calls it: "Oplossingen" and
+ * "Behandelingen" are both offer sections. Never a client-specific value.
+ */
+export const SECTION_ROLES = [
+  "offer",
+  "product",
+  "category",
+  "audience",
+  "place",
+  "knowledge",
+  "proof",
+  "pricing",
+  "company",
+] as const;
+export const SectionRole = z.enum(SECTION_ROLES);
+export type SectionRole = z.infer<typeof SectionRole>;
+
+/** A folder path: "/" or "/a/" or "/a/b/". */
+const Folder = z.string().regex(/^\/([a-z0-9-]+\/)*$/, "folder path like /kennisbank/");
+
+/**
+ * One section of the client's site: a WordPress post type, a menu group or a URL folder. A page
+ * has a topic (its place in the topical map) and a section (its template and URL folder).
+ */
+export const SiteSection = z.object({
+  key: z.string().regex(/^[a-z0-9-]+$/),
+  /** In the site's own words ("Oplossingen", "Kennisbank"); never translated. */
+  name: z.string().min(1),
+  /** Where its pages live. "/" for pages at the root of the site (services at /dakreparatie/). */
+  folder: Folder,
+  /** Where Mycel found it, strongest first. */
+  source: z.enum(["post_type", "menu", "folder", "owner"]),
+  role: SectionRole.optional(),
+  /** Sub-groups in the site's words, with their folder when they have one (/kennisbank/ai/). */
+  categories: z.array(z.object({ name: z.string().min(1), folder: Folder.optional() })).default([]),
+});
+export type SiteSection = z.infer<typeof SiteSection>;
+
+/** A main-menu group: a label with pages under it ("Diensten" over five service pages). */
+export const MenuGroup = z.object({
+  label: z.string().min(1),
+  urls: z.array(z.string().startsWith("/")).min(1),
+});
+export type MenuGroup = z.infer<typeof MenuGroup>;
 
 export const SitePages = z
   .object({
     site: z.string().min(1),
     source: z.enum(["fixture", "wordpress", "crawl"]),
     pages: z.array(SitePage).min(1),
+    /** The site's sections, when the reader knows them (WordPress post types). */
+    sections: z.array(SiteSection).default([]),
+    /** Main-menu groups from the home page: they reveal sections that have no folder. */
+    menu: z.array(MenuGroup).default([]),
   })
   .superRefine((s, ctx) => {
     const seen = new Set<string>();

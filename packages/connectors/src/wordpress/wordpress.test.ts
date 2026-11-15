@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ApiCallInput, CallRecorder } from "../recorder.ts";
-import { htmlToText, kindOf, WordPressClient } from "./client.ts";
+import { commonFolder, htmlToText, kindOf, readMenu, WordPressClient } from "./client.ts";
 
 function recorder() {
   const calls: ApiCallInput[] = [];
@@ -24,8 +24,8 @@ const json = (body: unknown, headers: Record<string, string> = {}) =>
   });
 
 const types = {
-  post: { slug: "post", rest_base: "posts", rest_namespace: "wp/v2" },
-  page: { slug: "page", rest_base: "pages", rest_namespace: "wp/v2" },
+  post: { slug: "post", name: "Berichten", rest_base: "posts", rest_namespace: "wp/v2" },
+  page: { slug: "page", name: "Pagina&#8217;s", rest_base: "pages", rest_namespace: "wp/v2" },
   attachment: { slug: "attachment", rest_base: "media", rest_namespace: "wp/v2" },
   wp_block: { slug: "wp_block", rest_base: "blocks", rest_namespace: "wp/v2" },
   elementor_library: {
@@ -33,8 +33,24 @@ const types = {
     rest_base: "elementor_library",
     rest_namespace: "wp/v2",
   },
-  dienst: { slug: "dienst", rest_base: "dienst", rest_namespace: "wp/v2" },
+  dienst: { slug: "dienst", name: "Diensten", rest_base: "dienst", rest_namespace: "wp/v2" },
 };
+
+const MENU = `<ul class="menu">
+  <li class="menu-item menu-item-has-children"><a href="#">Diensten</a>
+    <ul class="sub-menu">
+      <li class="menu-item"><a href="https://site.test/dienst/implementatie/">Implementatie</a></li>
+      <li class="menu-item"><a href="/advies">Advies</a></li>
+      <li class="menu-item menu-item-has-children"><a href="/extra/">Extra</a>
+        <ul class="sub-menu"><li><a href="/extra/een/">Een</a></li></ul>
+      </li>
+    </ul>
+  </li>
+  <li class="menu-item"><a href="/contact/">Contact</a></li>
+  <li class="menu-item menu-item-has-children"><a href="#">Elders</a>
+    <ul class="sub-menu"><li><a href="https://other.test/x/">X</a></li><li><a href="mailto:a@b.c">Mail</a></li></ul>
+  </li>
+</ul>`;
 
 function fakeSite(): { fetchImpl: typeof fetch; urls: string[] } {
   const urls: string[] = [];
@@ -42,7 +58,9 @@ function fakeSite(): { fetchImpl: typeof fetch; urls: string[] } {
     const url = String(input);
     urls.push(url);
     const u = new URL(url);
-    if (u.pathname === "/") return new Response('<html lang="nl-NL"><body>hi</body></html>');
+    if (u.pathname === "/") return new Response(`<html lang="nl-NL"><body>${MENU}</body></html>`);
+    if (u.pathname.endsWith("/categories"))
+      return json([{ id: 3, name: "Business &amp; ERP" }], { "x-wp-totalpages": "1" });
     if (u.pathname.endsWith("/types")) return json(types);
     const page = Number(u.searchParams.get("page"));
     if (u.pathname.endsWith("/pages")) {
@@ -81,7 +99,8 @@ function fakeSite(): { fetchImpl: typeof fetch; urls: string[] } {
             id: 10 + page,
             type: "post",
             slug: `p${page}`,
-            link: `https://site.test/blog/p${page}/`,
+            link: `https://site.test/blog/erp/p${page}/`,
+            categories: [3],
             title: { rendered: `Post ${page}` },
             content: { rendered: `<p>Tekst ${page}</p>` },
           },
@@ -118,6 +137,19 @@ describe("htmlToText", () => {
   });
 });
 
+describe("sections helpers", () => {
+  it("finds the deepest shared folder", () => {
+    expect(commonFolder(["/kennisbank/ai/x/", "/kennisbank/bc/y/"])).toBe("/kennisbank/");
+    expect(commonFolder(["/oplossingen/a/"])).toBe("/oplossingen/");
+    expect(commonFolder(["/", "/over-ons/"])).toBe("/");
+  });
+
+  it("reads a printed-twice menu once", () => {
+    const html = `<nav>${MENU}</nav><nav class="mobile">${MENU}</nav>`;
+    expect(readMenu(html, "https://site.test").map((g) => g.label)).toEqual(["Diensten", "Extra"]);
+  });
+});
+
 describe("kindOf", () => {
   it("uses structure only", () => {
     expect(kindOf("page", "/")).toBe("home");
@@ -135,8 +167,8 @@ describe("WordPressClient", () => {
     expect(site.source).toBe("wordpress");
     expect(site.pages.map((p) => p.url).sort()).toEqual([
       "/",
-      "/blog/p1/",
-      "/blog/p2/",
+      "/blog/erp/p1/",
+      "/blog/erp/p2/",
       "/dienst/implementatie/",
     ]);
     const home = site.pages.find((p) => p.url === "/");
@@ -150,6 +182,26 @@ describe("WordPressClient", () => {
     expect(site.pages.find((p) => p.url === "/dienst/implementatie/")?.text).toBe(
       "Wij implementeren.",
     );
+    // Sections (issue #51): post types with their label and folder, post categories, menu groups.
+    expect(site.sections).toEqual([
+      {
+        key: "post",
+        name: "Blog",
+        folder: "/blog/erp/",
+        source: "post_type",
+        categories: [{ name: "Business & ERP" }],
+      },
+      { key: "page", name: "Pagina’s", folder: "/", source: "post_type", categories: [] },
+      { key: "dienst", name: "Dienst", folder: "/dienst/", source: "post_type", categories: [] },
+    ]);
+    expect(site.pages.find((p) => p.url === "/blog/erp/p1/")).toMatchObject({
+      section: "post",
+      category: "Business & ERP",
+    });
+    expect(site.menu).toEqual([
+      { label: "Diensten", urls: ["/dienst/implementatie/", "/advies/", "/extra/", "/extra/een/"] },
+      { label: "Extra", urls: ["/extra/een/"] },
+    ]);
     expect(urls.some((u) => u.includes("/media"))).toBe(false);
     expect(urls.some((u) => u.includes("/blocks") || u.includes("elementor"))).toBe(false);
     expect(calls.every((c) => c.service === "wordpress" && c.costUsd === 0)).toBe(true);
