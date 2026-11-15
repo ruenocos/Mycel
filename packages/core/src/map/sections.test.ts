@@ -160,6 +160,7 @@ describe("assignSections", () => {
       { ...offering("erp", "service", "/oplossingen/erp/"), audiences: ["bouwbedrijven"] },
       offering("planner", "product_line"),
     ],
+    places: { locations: [], serves: ["Delft", "Gouda"], nationwide: false },
   });
 
   it("places every page by the rules, and suggests a section the site lacks", () => {
@@ -180,7 +181,16 @@ describe("assignSections", () => {
     ];
     const parent = new Map(nodes.filter((x) => !x.isRoot).map((x) => [x.id, "root"]));
     parent.set("erp koppeling", "erp");
-    const { of, suggested } = assignSections({ nodes, parent, site, business: b, language: "nl" });
+    const { of, suggested } = assignSections({
+      nodes: [...nodes, n("epdm dakbedekking", { intent: "local" })],
+      parent,
+      site,
+      business: b,
+      language: "nl",
+      city: "Rotterdam",
+    });
+    // Local intent without a place in the search is no place page.
+    expect(of.get("epdm dakbedekking")?.key).toBe("oplossingen");
     expect(of.get("erp")).toMatchObject({ key: "oplossingen", why: "existing page" });
     expect(of.get("erp voor bouwbedrijven")?.key).toBe("sectoren");
     expect(of.get("wat is business central")).toMatchObject({
@@ -202,6 +212,7 @@ describe("assignSections", () => {
       site,
       business: b,
       language: "nl",
+      city: "Rotterdam",
     });
     expect(one.suggested).toEqual([]);
     expect(one.of.get("erp leverancier rotterdam")?.key).toBe("oplossingen");

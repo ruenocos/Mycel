@@ -363,6 +363,7 @@ function finishOne(
     site,
     ...(ctx.business ? { business: ctx.business } : {}),
     language: ctx.market.language,
+    ...(ctx.market.city ? { city: ctx.market.city } : {}),
   });
   const sectionList = [...site.sections, ...placed.suggested];
   const sectionOf = (id: string) => {

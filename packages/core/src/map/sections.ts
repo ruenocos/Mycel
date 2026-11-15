@@ -256,7 +256,7 @@ const SUGGEST: Partial<Record<SectionRole, string>> = {
 /**
  * One section for every map page, by rules (plan doc, "How each map page gets its page type"):
  * an existing page keeps its own; an offering's page goes to the section for its kind; a local
- * page to the place section; a page for an audience to the audience section; a question page to
+ * page that names a place to the place section; a page for an audience to the audience section; a question page to
  * the knowledge section (and its closest category); else the section of its nearest hub with a
  * page; else the offer section; else the top level. A role the site has no section for becomes a
  * suggested section.
@@ -267,8 +267,21 @@ export function assignSections(input: {
   site: SiteSectionsResult;
   business?: BusinessProfile;
   language: string;
+  /** The market's city, a place a local page may name. */
+  city?: string;
 }): { of: Map<string, NodeSection>; suggested: SiteSection[] } {
   const { nodes, parent, site, business, language } = input;
+  // Places a page may name: the business's, the market's city, and the last URL segment of each
+  // page in a place section (/werkgebied/schiedam/ → schiedam).
+  const placeSections = new Set(site.sections.filter((s) => s.role === "place").map((s) => s.key));
+  const places = [
+    ...placeTerms(business),
+    ...(input.city ? [input.city] : []),
+    ...[...site.pageSection]
+      .filter(([, v]) => placeSections.has(v.key))
+      .map(([url]) => (url.split("/").filter(Boolean).at(-1) ?? "").replace(/-/g, " "))
+      .filter(Boolean),
+  ];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const byRole = new Map<SectionRole, SiteSection>();
   // The biggest section per role wins when two share one.
@@ -322,7 +335,8 @@ export function assignSections(input: {
       if (r) return { key: r.s.key, why: `page for an offering (${offering.kind})` };
     }
     const informational = n.intent === "informational";
-    if (n.intent === "local") {
+    // A local search that names a place; "local" alone often means a map pack, not a place page.
+    if (n.intent === "local" && mentions(n.mainQuery, places, language)) {
       const r = roleSection("place");
       if (r)
         return { key: r.s.key, ...(r.suggested ? { suggested: true } : {}), why: "local page" };
