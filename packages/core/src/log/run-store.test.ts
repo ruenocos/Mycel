@@ -2,10 +2,18 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { MycelError } from "./errors.ts";
 import { memorySink } from "./logger.ts";
 import { REDACTED, redact } from "./redact.ts";
-import { RunStore } from "./run-store.ts";
-import { formatTimeline, listRuns, readRunMeta, resolveRunId } from "./timeline.ts";
+import { RunStore, setRunProgress } from "./run-store.ts";
+import {
+  formatRunSummary,
+  formatTimeline,
+  listRuns,
+  readRunMeta,
+  resolveRunId,
+  summarizeRun,
+} from "./timeline.ts";
 
 const SECRET = "sk-test-supersecret-123456";
 
@@ -142,6 +150,78 @@ describe("timeline", () => {
     expect(resolveRunId(runsDir, "latest")).toBe(run.runId);
     expect(resolveRunId(runsDir, run.runId.slice(0, 10))).toBe(run.runId);
     expect(() => resolveRunId(runsDir, "nope")).toThrow(/no run matches/);
+    // A typo in a run id is the caller's to fix: it carries a code and a fix, not just a stack.
+    try {
+      resolveRunId(runsDir, "nope");
+    } catch (err) {
+      expect(err).toBeInstanceOf(MycelError);
+      expect(err).toMatchObject({ code: "RUN_NOT_FOUND", transient: false });
+      expect((err as MycelError).fix).toContain("mycel logs");
+    }
+  });
+});
+
+describe("run summary", () => {
+  it("is one line per step however many calls a step made, and says what failed", async () => {
+    const { run } = await dummyRun();
+    const summary = summarizeRun(runsDir, run.runId);
+    expect(summary).toMatchObject({ status: "failed", command: "map", client: "plantpost" });
+    expect(summary.steps.map((s) => [s.name, s.status])).toEqual([
+      ["context", "ok"],
+      ["cluster", "failed"],
+    ]);
+    const lines = formatRunSummary(summary);
+    expect(lines).toHaveLength(summary.steps.length + 1 + (summary.warnings ? 1 : 0));
+    expect(lines[0]).toMatch(/^steps {7}context /);
+    expect(lines.join("\n")).toContain("FAILED");
+    expect(lines.at(-1)).toContain(`run         ${run.runId}  failed`);
+    expect(lines.at(-1)).toContain(`(full log: mycel logs ${run.runId})`);
+    // Nothing is taken out of the log: the timeline still has every call.
+    expect(formatTimeline(runsDir, run.runId)).toContain("api  dataforseo");
+  });
+
+  it("counts cache hits per step and points to the warnings", async () => {
+    const run = RunStore.create({ runsDir, client: "x", command: "cluster", cliVersion: "0" });
+    await run.step("cluster", async (ctx) => {
+      ctx.log.warn("SERPs not cached and paid SERP calls are off", { count: 2 });
+      for (const cache of ["hit", "hit", "miss"] as const) {
+        ctx.recordApiCall({
+          service: "dataforseo",
+          endpoint: "serp",
+          requestHash: "h",
+          cache,
+          costUsd: cache === "miss" ? 0.0006 : 0,
+          latencyMs: 1,
+          status: 200,
+          startedAt: new Date().toISOString(),
+        });
+      }
+    });
+    run.finish();
+    const summary = summarizeRun(runsDir, run.runId);
+    expect(summary.steps[0]).toMatchObject({ apiCalls: 3, cachedApiCalls: 2, llmCalls: 0 });
+    expect(summary.warnings).toBe(1);
+    const text = formatRunSummary(summary).join("\n");
+    expect(text).toContain("3 API calls (2 from cache)");
+    expect(text).toContain(`warnings    1 (mycel logs ${run.runId} --level warn)`);
+  });
+});
+
+describe("run progress", () => {
+  it("names each step as it starts, unless the log is already mirrored to the console", async () => {
+    const seen: string[] = [];
+    setRunProgress((line) => seen.push(line));
+    try {
+      const run = RunStore.create({ runsDir, client: "x", command: "c", cliVersion: "0" });
+      await run.step("first", async () => undefined);
+      await run.step("second", async () => undefined);
+      expect(seen).toEqual(["running     first", "running     second"]);
+    } finally {
+      setRunProgress(undefined);
+    }
+    const quiet = RunStore.create({ runsDir, client: "x", command: "c", cliVersion: "0" });
+    await quiet.step("third", async () => undefined);
+    expect(seen).toHaveLength(2);
   });
 });
 

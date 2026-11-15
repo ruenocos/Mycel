@@ -6,7 +6,7 @@ import {
   blindSheet,
   buildWritingMessages,
   CORE_VERSION,
-  formatTimeline,
+  MycelError,
   parseScores,
   parseWriter,
   RunStore,
@@ -17,6 +17,8 @@ import {
   type WritingVerdict,
 } from "@mycel/core";
 import { WritingKey, type WritingOutput, WritingTestSet } from "@mycel/schema";
+import { command, readInput } from "./input.ts";
+import type { CommandResult } from "./run-command.ts";
 
 const OUT = "writing-test";
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -44,9 +46,14 @@ export interface WritingRunOptions {
 }
 
 /** Every model writes every task inside one logged run; then the blind sheet is written next to it. */
-export async function writingRun(opts: WritingRunOptions) {
+export async function writingRun(
+  opts: WritingRunOptions,
+): Promise<CommandResult & { runId: string; dir: string }> {
   const env = opts.env ?? process.env;
-  const set = WritingTestSet.parse(JSON.parse(readFileSync(opts.tasksPath, "utf8")));
+  const set = readInput(opts.tasksPath, WritingTestSet, {
+    name: "writing task set",
+    writtenBy: "hand (see evals/writing/sample.json)",
+  });
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: "none",
@@ -134,7 +141,7 @@ export async function writingRun(opts: WritingRunOptions) {
       `sheet     ${join(dir, "sheet.md")}`,
       `scores    ${join(dir, "scores.csv")}  (fill in, then: mycel eval writing score ${run.runId})`,
     ],
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(failure !== undefined ? { failure } : {}),
   };
 }
 
@@ -145,7 +152,11 @@ export function writingScore(opts: { runsDir: string; run: string; candidate: st
 } {
   const runId = resolveRunId(opts.runsDir, opts.run);
   const dir = join(opts.runsDir, runId, OUT);
-  if (!existsSync(join(dir, "key.json"))) throw new Error(`no writing test in run ${runId}`);
+  if (!existsSync(join(dir, "key.json"))) {
+    throw new MycelError("INPUT_MISSING", `no writing test in run ${runId}`, {
+      fix: `pass a run made by ${command("eval writing run")}`,
+    });
+  }
   const set = WritingTestSet.parse(JSON.parse(readFileSync(join(dir, "tasks.json"), "utf8")));
   const key = WritingKey.parse(JSON.parse(readFileSync(join(dir, "key.json"), "utf8")));
   const scores = parseScores(readFileSync(join(dir, "scores.csv"), "utf8"));

@@ -1,9 +1,11 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readRunMeta } from "@mycel/core";
 import { ClientContext } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
 import { assertReplaceable, contextConfirm, contextPropose, parseMarket } from "./context.ts";
+import { describeError } from "./errors.ts";
 
 const fixture = (name: string) => join(import.meta.dirname, "../../../fixtures/clients", name);
 const tmp = () => mkdtempSync(join(tmpdir(), "mycel-cli-ctx-"));
@@ -37,8 +39,10 @@ describe("mycel context propose", () => {
     expect(ctx.market).toEqual({ country: "NL", language: "nl", city: "Utrecht" });
     expect(ctx.answers).toHaveLength(9);
     expect(ctx.answers[0]?.question).toBe("Wat verkoop of bied je aan?");
-    expect(res.timeline).toContain("context-sources");
-    expect(res.timeline).toContain("context-propose");
+    const steps = readRunMeta(join(dir, "runs"), res.runId).steps.map((s) => s.name);
+    expect(steps).toEqual(["context-sources", "context-propose"]);
+    expect(res.outputs).toEqual({ proposal: outFile });
+    expect(res.next).toEqual([{ command: `mycel context confirm ${outFile}` }]);
     expect(res.lines.join("\n")).toContain("0 GSC queries, 0 ranked keywords, 0 competitors");
   });
 
@@ -109,7 +113,8 @@ describe("mycel context propose", () => {
       env: {},
     });
     expect(res.ok).toBe(false);
-    expect(res.lines.join("\n")).toContain("--market");
+    expect(describeError(res.failure)).toMatchObject({ code: "USAGE", transient: false });
+    expect(describeError(res.failure).fix).toContain("--market");
   });
 });
 

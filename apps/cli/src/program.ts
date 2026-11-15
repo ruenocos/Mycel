@@ -6,55 +6,95 @@ import { contextConfirm, contextPropose } from "./context.ts";
 import { writingRun, writingScore } from "./eval-writing.ts";
 import { DEFAULT_MIN_ACCURACY, filterEval, filterRun } from "./filter.ts";
 import { gscCheck } from "./gsc-check.ts";
+import { command } from "./input.ts";
 import { llmPing } from "./llm-ping.ts";
 import { mapRun } from "./map.ts";
 import { research } from "./research.ts";
+import { type CommandIo, type CommandResult, runCommand } from "./run-command.ts";
+
+/** The model that writes (ADR 0012). One place, so a switch is one edit. */
+export const DEFAULT_MODEL = "deepseek-v4.1-flash";
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
 
-export function buildProgram(out: (s: string) => void = (s) => console.log(s)): Command {
+const provider = () =>
+  new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama");
+const DEBUG = ["--debug", "mirror logs to the console, and show the stack of an error"] as const;
+const UNCONFIRMED = [
+  "--allow-unconfirmed",
+  "run on a context nobody confirmed yet (dry run)",
+] as const;
+
+const examples = (...lines: string[]) => `\nExamples:\n${lines.map((l) => `  ${l}`).join("\n")}\n`;
+
+/** Shown under `mycel --help`: the route through the pipeline, and what each exit code means. */
+const ROUTE = `
+A typical run, in order (every command prints the next one with its paths filled in):
+  mycel context propose https://example.com
+  mycel context confirm clients/example.com/context.json
+  mycel research clients/example.com/context.json
+  mycel filter clients/example.com/research.json
+  mycel cluster clients/example.com/queries.json --live-serp --budget 3
+  mycel map clients/example.com/clusters.json
+  mycel logs latest
+
+Exit codes:
+   0  done
+   1  the run failed: read the log
+   2  wrong flag or argument
+   3  an input file is missing, wrong or not confirmed: run the earlier step
+   4  a key is missing or was refused: check .env
+   5  the command would replace a file a person confirmed: use --out or --force
+  10  the run worked, but a quality gate or eval is below its pass mark
+  11  the budget is reached, or a paid call is needed and not allowed
+  75  temporary (network, rate limit): run the same command again
+`;
+
+export function buildProgram(
+  out: (s: string) => void = (s) => console.log(s),
+  io: Partial<Omit<CommandIo, "out">> = {},
+): Command {
+  const cio: CommandIo = {
+    out,
+    err: io.err ?? ((s) => console.error(s)),
+    setExitCode:
+      io.setExitCode ??
+      ((code) => {
+        process.exitCode = code;
+      }),
+  };
   const program = new Command()
     .name("mycel")
     .description("Build a data-driven topical map. A human approves everything.")
     .version(CORE_VERSION)
-    .option("--runs-dir <dir>", "where runs are stored", "runs");
-
-  program
-    .command("logs")
-    .description("Show a readable timeline of a run, or list recent runs")
-    .argument("[run]", 'run id, unique prefix, or "latest"')
-    .addOption(
-      new Option("--level <level>", "minimum level to show")
-        .choices(["debug", "info", "warn", "error"])
-        .default("info"),
+    .option("--runs-dir <dir>", "where runs are stored", "runs")
+    // A wrong flag throws instead of exiting, so index.ts can give it exit code 2.
+    .exitOverride()
+    .configureOutput({
+      // commander's own messages (a wrong flag, a typo in a command) in the same shape and on
+      // the same stream as every other error.
+      writeErr: (s) => cio.err(s.trimEnd()),
+      outputError: (s, write) => write(s.replace(/^error: /, "error       ")),
+    })
+    .showHelpAfterError(
+      "fix         mycel --help shows the commands, their order and the exit codes",
     )
-    .action((run: string | undefined, opts: { level: LogLevel }) => {
-      const runsDir = program.opts<{ runsDir: string }>().runsDir;
-      if (!run) {
-        const runs = listRuns(runsDir).slice(0, 15);
-        if (runs.length === 0) return out(`No runs in ${runsDir}.`);
-        for (const r of runs) {
-          out(`${r.runId}  ${r.status.padEnd(7)}  ${r.client}  ${r.command}  ${usd(r.costUsd)}`);
-        }
-        return;
-      }
-      out(formatTimeline(runsDir, resolveRunId(runsDir, run), { minLevel: opts.level }));
-    });
-
-  const llm = program.command("llm").description("LLM provider tools");
-  llm
-    .command("ping")
-    .description("One logged LLM call, to check provider, key and logging")
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
-    .option("--debug", "mirror logs to the console")
-    .action(async (opts: { provider: string; model: string; debug?: boolean }) => {
-      const runsDir = program.opts<{ runsDir: string }>().runsDir;
-      const { timeline } = await llmPing({ runsDir, ...opts });
-      out(timeline);
-    });
+    .addHelpText("after", ROUTE);
+  const runsDir = () => program.opts<{ runsDir: string }>().runsDir;
+  /** Every command ends the same way: result, run summary, next step; or error, fix, code. */
+  const run = (
+    opts: { debug?: boolean | undefined; timeline?: "full" },
+    fn: () => Promise<CommandResult> | CommandResult,
+  ) =>
+    runCommand(
+      cio,
+      {
+        runsDir: runsDir(),
+        ...(opts.timeline ? { timeline: opts.timeline } : {}),
+        ...(opts.debug ? { debug: true } : {}),
+      },
+      fn,
+    );
 
   const context = program
     .command("context")
@@ -70,10 +110,8 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       'country / language / city, e.g. "NL / nl / Utrecht" (default: from the site)',
     )
     .option("--out <file>", "where to write the proposal (default: clients/<host>/context.json)")
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
     .option("--no-gsc", "don't use Search Console")
     .option("--no-dataforseo", "don't use DataforSEO")
     .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
@@ -81,9 +119,16 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       "--force",
       "replace a context that was already confirmed or reviewed (a backup is kept next to it)",
     )
-    .option("--debug", "mirror logs to the console")
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel context propose https://example.com",
+        'mycel context propose fixtures/clients/plantpost --market "NL / nl" --provider fake --out /tmp/context.json',
+      ),
+    )
     .action(
-      async (
+      (
         site: string,
         opts: {
           market?: string;
@@ -96,12 +141,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           force?: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof contextPropose>>;
-        try {
-          res = await contextPropose({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          contextPropose({
+            runsDir: runsDir(),
             site,
             provider: opts.provider,
             model: opts.model,
@@ -112,33 +155,27 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.force ? { force: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          // Raised before a run exists (a bad --budget, a confirmed context in the way).
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
   context
     .command("confirm")
     .description("Go through a proposed context in the terminal: keep or edit every answer")
     .argument("<file>", "context.json written by mycel context propose")
     .option("--by <name>", "who confirms (default: your OS user name)")
-    .action(async (file: string, opts: { by?: string }) => {
-      const by = opts.by ?? process.env.USERNAME ?? process.env.USER ?? "unknown";
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        await contextConfirm(file, by, { print: out, ask: (p) => rl.question(p) });
-      } finally {
-        rl.close();
-      }
-    });
+    .addHelpText("after", examples("mycel context confirm clients/example.com/context.json"))
+    .action((file: string, opts: { by?: string }) =>
+      run({}, async () => {
+        const by = opts.by ?? process.env.USERNAME ?? process.env.USER ?? "unknown";
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          await contextConfirm(file, by, { print: out, ask: (p) => rl.question(p) });
+        } finally {
+          rl.close();
+        }
+        return { ok: true, lines: [], next: [{ command: command("research", file) }] };
+      }),
+    );
 
   program
     .command("research")
@@ -154,18 +191,23 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       "--out <file>",
       "where to write the dataset (default: research.json next to the context)",
     )
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--model <model>", "model for seed phrasing", "deepseek-v4.1-flash")
+    .addOption(provider())
+    .option("--model <model>", "model for seed phrasing", DEFAULT_MODEL)
     .option("--no-model", "deterministic seeds only")
     .option("--no-gsc", "don't use Search Console")
     .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
     .option("--budget <usd>", "DataforSEO budget for this run", "1")
-    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
-    .option("--debug", "mirror logs to the console")
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel research clients/example.com/context.json",
+        "mycel research clients/example.com/context.json --live-serp --budget 2",
+      ),
+    )
     .action(
-      async (
+      (
         contextFile: string,
         opts: {
           site?: string;
@@ -178,12 +220,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof research>>;
-        try {
-          res = await research({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          research({
+            runsDir: runsDir(),
             contextFile,
             provider: opts.provider,
             model: opts.model === false ? "none" : opts.model,
@@ -195,18 +235,8 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             ...(opts.site ? { site: opts.site } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          // Raised before a run exists (missing or unconfirmed context): nothing to log yet.
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
 
   program
@@ -215,14 +245,13 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .argument("<research>", "research.json written by mycel research")
     .option("--context <file>", "the confirmed context (default: context.json next to research)")
     .option("--out <file>", "where to write the result (default: queries.json next to research)")
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
-    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
-    .option("--debug", "mirror logs to the console")
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText("after", examples("mycel filter clients/example.com/research.json"))
     .action(
-      async (
+      (
         researchFile: string,
         opts: {
           context?: string;
@@ -232,12 +261,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof filterRun>>;
-        try {
-          res = await filterRun({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          filterRun({
+            runsDir: runsDir(),
             researchFile,
             provider: opts.provider,
             model: opts.model,
@@ -245,17 +272,8 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             ...(opts.context ? { contextFile: opts.context } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
 
   program
@@ -269,10 +287,17 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
     .option("--budget <usd>", "DataforSEO budget for this run", "3")
     .option("--min-shared <n>", "shared top-10 URLs for one page (ADR 0003)", "3")
-    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
-    .option("--debug", "mirror logs to the console")
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel cluster clients/example.com/queries.json",
+        "mycel cluster clients/example.com/queries.json --live-serp --budget 3",
+      ),
+    )
     .action(
-      async (
+      (
         queriesFile: string,
         opts: {
           context?: string;
@@ -283,12 +308,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof clusterRun>>;
-        try {
-          res = await clusterRun({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          clusterRun({
+            runsDir: runsDir(),
             queriesFile,
             liveSerp: !!opts.liveSerp,
             budgetUsd: Number(opts.budget),
@@ -297,17 +320,8 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             ...(opts.context ? { contextFile: opts.context } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
 
   program
@@ -324,14 +338,19 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     )
     .option("--expect <file>", "a test client's expectations.json: check the map against it")
     .option("--out <file>", "where to write the map (default: topical-map.json next to clusters)")
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples(
+        "mycel map clients/example.com/clusters.json",
+        "mycel map clients/plantpost.example/clusters.json --expect fixtures/clients/plantpost/expectations.json",
+      ),
     )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
-    .option("--allow-unconfirmed", "run on a context nobody confirmed yet (dry run)")
-    .option("--debug", "mirror logs to the console")
     .action(
-      async (
+      (
         clustersFile: string,
         opts: {
           queries?: string;
@@ -344,12 +363,10 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof mapRun>>;
-        try {
-          res = await mapRun({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          mapRun({
+            runsDir: runsDir(),
             clustersFile,
             provider: opts.provider,
             model: opts.model,
@@ -360,33 +377,40 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
             ...(opts.expect ? { expectFile: opts.expect } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        out("");
-        out(res.timeline);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
 
-  const gsc = program.command("gsc").description("Google Search Console tools");
-  gsc
-    .command("check")
-    .description("Check the GSC key and access, and show the top queries of the last 28 days")
-    .option("--property <property>", "GSC property (default: GSC_PROPERTY)")
-    .option("--debug", "mirror logs to the console")
-    .action(async (opts: { property?: string; debug?: boolean }) => {
-      const runsDir = program.opts<{ runsDir: string }>().runsDir;
-      const res = await gscCheck({ runsDir, ...opts });
-      for (const l of res.lines) out(l);
-      out("");
-      out(res.timeline);
-      if (!res.ok) process.exitCode = 1;
-    });
+  program
+    .command("logs")
+    .description("Show a readable timeline of a run, or list recent runs")
+    .argument("[run]", 'run id, unique prefix, or "latest"')
+    .addOption(
+      new Option("--level <level>", "minimum level to show")
+        .choices(["debug", "info", "warn", "error"])
+        .default("info"),
+    )
+    .addHelpText(
+      "after",
+      examples("mycel logs", "mycel logs latest", "mycel logs 2026-11-14T08 --level warn"),
+    )
+    .action((runArg: string | undefined, opts: { level: LogLevel }) =>
+      run({}, () => {
+        if (!runArg) {
+          const runs = listRuns(runsDir()).slice(0, 15);
+          if (runs.length === 0) return { ok: true, lines: [`No runs in ${runsDir()}.`] };
+          return {
+            ok: true,
+            lines: runs.map(
+              (r) =>
+                `${r.runId}  ${r.status.padEnd(7)}  ${r.client}  ${r.command}  ${usd(r.costUsd)}`,
+            ),
+          };
+        }
+        const runId = resolveRunId(runsDir(), runArg);
+        return { ok: true, lines: [formatTimeline(runsDir(), runId, { minLevel: opts.level })] };
+      }),
+    );
 
   const evals = program.command("eval").description("Evaluations");
   evals
@@ -398,40 +422,33 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
       "fixtures/clients/plantpost",
       "fixtures/clients/praktijk-beweegruimte",
     ])
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--model <model>", "model name", "deepseek-v4.1-flash")
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
     .option(
       "--min-accuracy <share>",
       "share of labeled queries each set must get right, 0 to 1",
       String(DEFAULT_MIN_ACCURACY),
     )
-    .option("--debug", "mirror logs to the console")
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      examples("mycel eval filter", "mycel eval filter fixtures/clients/plantpost --provider fake"),
+    )
     .action(
-      async (
+      (
         fixtures: string[],
         opts: { provider: string; model: string; minAccuracy: string; debug?: boolean },
-      ) => {
-        const runsDir = program.opts<{ runsDir: string }>().runsDir;
-        let res: Awaited<ReturnType<typeof filterEval>>;
-        try {
-          res = await filterEval({
-            runsDir,
+      ) =>
+        run(opts, () =>
+          filterEval({
+            runsDir: runsDir(),
             fixtures,
             provider: opts.provider,
             model: opts.model,
             minAccuracy: Number(opts.minAccuracy),
             ...(opts.debug ? { debug: true } : {}),
-          });
-        } catch (err) {
-          out(`failed      ${(err as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-        for (const l of res.lines) out(l);
-        if (!res.ok) process.exitCode = 1;
-      },
+          }),
+        ),
     );
   const writing = evals
     .command("writing")
@@ -442,39 +459,57 @@ export function buildProgram(out: (s: string) => void = (s) => console.log(s)): 
     .requiredOption("--tasks <file>", "task set JSON (WritingTestSet)")
     .option(
       "--models <list>",
-      "comma-separated writers; add +en for English instructions (e.g. deepseek-v4.1-flash,deepseek-v4.1-flash+en)",
-      "deepseek-v4.1-flash,gemma4:31b,mistral-large-4",
+      `comma-separated writers; add +en for English instructions (e.g. ${DEFAULT_MODEL},${DEFAULT_MODEL}+en)`,
+      `${DEFAULT_MODEL},gemma4:31b,mistral-large-4`,
     )
-    .addOption(
-      new Option("--provider <name>", "LLM provider").choices(["ollama", "fake"]).default("ollama"),
-    )
-    .option("--debug", "mirror logs to the console")
-    .action(async (opts: { tasks: string; models: string; provider: string; debug?: boolean }) => {
-      const runsDir = program.opts<{ runsDir: string }>().runsDir;
-      const res = await writingRun({
-        runsDir,
-        tasksPath: opts.tasks,
-        models: opts.models
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean),
-        provider: opts.provider,
-        ...(opts.debug ? { debug: true } : {}),
-      });
-      for (const l of res.lines) out(l);
-      out("");
-      out(res.timeline);
-      if (!res.ok) process.exitCode = 1;
-    });
+    .addOption(provider())
+    .option(...DEBUG)
+    .action((opts: { tasks: string; models: string; provider: string; debug?: boolean }) =>
+      run(opts, () =>
+        writingRun({
+          runsDir: runsDir(),
+          tasksPath: opts.tasks,
+          models: opts.models
+            .split(",")
+            .map((m) => m.trim())
+            .filter(Boolean),
+          provider: opts.provider,
+          ...(opts.debug ? { debug: true } : {}),
+        }),
+      ),
+    );
   writing
     .command("score")
     .description("Unblind the filled-in scores.csv and apply the decision rule")
     .argument("<run>", 'run id, unique prefix, or "latest"')
-    .option("--candidate <model>", "the cheap model that should win", "deepseek-v4.1-flash")
-    .action((run: string, opts: { candidate: string }) => {
-      const runsDir = program.opts<{ runsDir: string }>().runsDir;
-      for (const l of writingScore({ runsDir, run, candidate: opts.candidate }).lines) out(l);
-    });
+    .option("--candidate <model>", "the cheap model that should win", DEFAULT_MODEL)
+    .action((runArg: string, opts: { candidate: string }) =>
+      run({}, () => ({
+        ok: true,
+        lines: writingScore({ runsDir: runsDir(), run: runArg, candidate: opts.candidate }).lines,
+      })),
+    );
+
+  const gsc = program.command("gsc").description("Google Search Console tools");
+  gsc
+    .command("check")
+    .description("Check the GSC key and access, and show the top queries of the last 28 days")
+    .option("--property <property>", "GSC property (default: GSC_PROPERTY)")
+    .option(...DEBUG)
+    .action((opts: { property?: string; debug?: boolean }) =>
+      run({ ...opts, timeline: "full" }, () => gscCheck({ runsDir: runsDir(), ...opts })),
+    );
+
+  const llm = program.command("llm").description("LLM provider tools");
+  llm
+    .command("ping")
+    .description("One logged LLM call, to check provider, key and logging")
+    .addOption(provider())
+    .option("--model <model>", "model name", DEFAULT_MODEL)
+    .option(...DEBUG)
+    .action((opts: { provider: string; model: string; debug?: boolean }) =>
+      run({ ...opts, timeline: "full" }, () => llmPing({ runsDir: runsDir(), ...opts })),
+    );
 
   return program;
 }

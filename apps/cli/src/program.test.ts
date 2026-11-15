@@ -1,7 +1,9 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readRunMeta } from "@mycel/core";
 import { describe, expect, it } from "vitest";
+import { describeError } from "./errors.ts";
 import { buildProgram } from "./program.ts";
 
 describe("mycel cli", () => {
@@ -54,8 +56,9 @@ describe("mycel gsc check", () => {
     const runsDir = mkdtempSync(join(tmpdir(), "mycel-cli-"));
     const res = await gscCheck({ runsDir, env: {} });
     expect(res.ok).toBe(false);
-    expect(res.lines.join("\n")).toContain("GSC_PROPERTY is not set");
-    expect(res.timeline).toContain("status failed");
+    expect(describeError(res.failure)).toMatchObject({ code: "KEY_MISSING" });
+    expect(describeError(res.failure).message).toContain("GSC_PROPERTY is not set");
+    expect(readRunMeta(runsDir, res.runId).status).toBe("failed");
   });
 });
 

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ResearchPort } from "@mycel/core";
+import { type ResearchPort, readRunMeta } from "@mycel/core";
 import { ResearchDataset } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
 import { research } from "./research.ts";
@@ -67,6 +67,8 @@ describe("mycel research", () => {
     expect(text).toContain("dry run");
     expect(text).toContain("groen.nl (");
     expect(text).not.toContain("youtube.com (");
-    expect(res.timeline).toContain("research-collect");
+    const steps = readRunMeta(join(dir, "runs"), res.runId).steps.map((s) => s.name);
+    expect(steps).toContain("research-collect");
+    expect(res.next).toEqual([{ command: `mycel filter ${join(dir, "research.json")}` }]);
   });
 });
