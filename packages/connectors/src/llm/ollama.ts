@@ -66,7 +66,19 @@ export class OllamaProvider implements LlmProvider {
         true,
       );
     }
-    const text = await res.text();
+    // The connection can drop while the answer streams in (undici: "terminated", ECONNRESET):
+    // that is a network error worth a retry, unless the caller cancelled.
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (err) {
+      throw new LlmProviderError(
+        `network error while reading the response: ${(err as Error).message}`,
+        this.name,
+        "network",
+        !signal?.aborted,
+      );
+    }
     let json: Record<string, unknown> = {};
     try {
       json = JSON.parse(text) as Record<string, unknown>;

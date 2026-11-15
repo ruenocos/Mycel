@@ -84,10 +84,26 @@ function gitCommit(): string | null {
   }
 }
 
+const RENAME_RETRIES = 6;
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * On Windows a file another program has open (a log viewer, antivirus, the search indexer) can't
+ * be replaced for a moment: the rename is retried a few times before the error is passed on.
+ */
 function writeJsonAtomic(path: string, value: unknown): void {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmp, path);
+  for (let i = 0; ; i++) {
+    try {
+      renameSync(tmp, path);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (i >= RENAME_RETRIES || !["EPERM", "EBUSY", "EACCES"].includes(code ?? "")) throw err;
+      sleepSync(25 * 2 ** i);
+    }
+  }
 }
 
 const round = (n: number) => Math.round(n * 1e6) / 1e6;

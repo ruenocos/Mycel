@@ -1,11 +1,14 @@
 import { ClientContext, ClusterSet, FilteredQuery, SiteMaps, SitePage } from "@mycel/schema";
 import { z } from "zod";
+import type { ClusterSerp, SerpBatchPort } from "../cluster/cluster.ts";
 import type { JsonModel } from "../context/llm.ts";
 import type { StepContext } from "../log/run-store.ts";
 import { defineStep } from "../step.ts";
+import { attachToBusiness, lockOfferingHubs } from "./attach.ts";
 import { judgeConflicts } from "./conflict.ts";
 import { finishMaps } from "./finish.ts";
 import { groupPages } from "./group.ts";
+import { mergeSameIntent } from "./intent.ts";
 import { labelPlan } from "./label.ts";
 import { linkPages } from "./link.ts";
 import { planMaps } from "./plan.ts";
@@ -21,6 +24,11 @@ import { anchorSiteHubs } from "./site.ts";
  * 5. group.ts: crowded hubs and loose top-level pages are grouped by theme.
  * 6. finish.ts: tiny pages fold into sections, actions and the first plan, URLs, link plan.
  * 7. conflict.ts: the model judges each conflict: merge or differentiate.
+ *
+ * With a confirmed business profile (issue #42), between 1 and 2:
+ * - attach.ts: pages attach to the offerings (hard gate for what the business doesn't do), every
+ *   offering gets a page, core pages without an offering drop to outer.
+ * - intent.ts: pages whose searches share 3+ top-10 results become one page (cached SERPs only).
  */
 
 /**
@@ -48,8 +56,11 @@ import { anchorSiteHubs } from "./site.ts";
  *    page is never a hub; new pages with the same title fold together; a site hub shows its
  *    section page, not an article on it; theme names start with a capital; the gate's
  *    childless check leaves the site's own sections out.
+ * 9: business-first (issue #42): offering skeleton and hard offer gate (attach.ts), one page
+ *    per intent by SERP overlap (intent.ts), offering hubs locked under the root, the model names
+ *    the offering of pages the words leave open (map-label v8), offeringId on every node.
  */
-export const MAP_STEP_VERSION = "8";
+export const MAP_STEP_VERSION = "9";
 
 export const MapInput = z.object({
   context: ClientContext,
@@ -62,6 +73,8 @@ export const MapInput = z.object({
   /** 15 keeps one call well under the provider timeout when several maps run at once. */
   batchSize: z.number().int().positive().default(15),
   concurrency: z.number().int().positive().default(3),
+  /** Merge pages whose cached SERPs overlap (needs a SERP port). */
+  intentSerps: z.boolean().default(true),
 });
 export type MapInput = z.input<typeof MapInput>;
 
@@ -79,7 +92,8 @@ function costMeter(ctx: StepContext) {
   return { rec, total: () => Math.round(usd * 10000) / 10000 };
 }
 
-export function mapStep(llm: JsonModel) {
+/** The map step. The SERP port, when given, must be cache only: this step adds no paid calls. */
+export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
   return defineStep({
     name: "map",
     version: MAP_STEP_VERSION,
@@ -98,16 +112,76 @@ export function mapStep(llm: JsonModel) {
           topLevel: e.nodes.filter((n) => !n.isRoot && !n.parentId).length,
         })),
       });
+      const business = input.context.business;
+      const attached = business ? attachToBusiness(plan, business, input.pages) : undefined;
+      if (attached) ctx.log.info("pages attached to the business", attached.stats);
+      const serps = new Map<string, ClusterSerp>();
+      const useSerps = !!(attached && serpPort && input.intentSerps);
+      if (attached && serpPort && useSerps) {
+        const queries = [
+          ...new Set(
+            plan.entities.flatMap((e) =>
+              e.nodes.filter((n) => !attached.gate.has(n.id)).map((n) => n.mainQuery),
+            ),
+          ),
+        ];
+        const res = await serpPort.serpOrganicBatch(queries, input.context.market, ctx);
+        for (const f of res.failed) ctx.log.warn("map: SERP failed", f);
+        for (const [k, v] of res.serps) serps.set(k, v);
+        const merges = mergeSameIntent(
+          plan,
+          serps,
+          new Set(attached.anchors.values()),
+          new Set(attached.gate.keys()),
+        );
+        ctx.log.info("one page per intent", {
+          withSerp: res.serps.size,
+          withoutSerp: res.blocked.length,
+          merged: merges.length,
+          examples: merges.slice(0, 10),
+        });
+      }
       const meter = costMeter(ctx);
       const opts = { model: input.model, concurrency: input.concurrency };
       // Existing pages first: the site's own sections become hubs the labels can build on.
       const linked = await linkPages(llm, plan, input.pages, opts, meter.rec);
+      // An offering's own page belongs to its offering page, whatever the model linked it to.
+      for (const [url, id] of attached?.pageLinks ?? []) linked.links.set(url, id);
       // The model's read of untyped pages (WordPress custom types arrive as "other").
       const pages = input.pages.map((p) => {
         const kind = linked.kinds.get(p.url);
         return kind ? { ...p, kind } : p;
       });
       const site = anchorSiteHubs(plan, pages, linked.links);
+      if (attached) lockOfferingHubs(plan, attached.anchors);
+      if (attached && serpPort && useSerps) {
+        // The site's own sections are pages now too: a planned page for the same search folds
+        // into the section the site already has.
+        const missing = [
+          ...new Set(plan.entities.flatMap((e) => e.nodes.map((n) => n.mainQuery))),
+        ].filter((q) => !serps.has(q));
+        if (missing.length) {
+          const res = await serpPort.serpOrganicBatch(missing, input.context.market, ctx);
+          for (const [k, v] of res.serps) serps.set(k, v);
+        }
+        const locked = new Set(
+          plan.entities
+            .flatMap((e) => e.nodes.filter((n) => n.hub && n.hub !== "theme"))
+            .map((n) => n.id),
+        );
+        const merges = mergeSameIntent(plan, serps, locked, new Set(attached.gate.keys()));
+        const into = new Map(merges.map((m) => [m.folded, m.kept]));
+        for (const [url, id] of site.links)
+          if (id && into.has(id)) site.links.set(url, into.get(id) as string);
+        for (const [url, id] of linked.also)
+          if (into.has(id)) linked.also.set(url, into.get(id) as string);
+        if (merges.length) {
+          ctx.log.info("one page per intent, with site sections", {
+            merged: merges.length,
+            examples: merges.slice(0, 10),
+          });
+        }
+      }
       ctx.log.info("site hubs", {
         hubs: [...site.hubs].map(([entity, ids]) => ({ entity, count: ids.length })),
       });
@@ -117,7 +191,11 @@ export function mapStep(llm: JsonModel) {
         { ...opts, batchSize: input.batchSize },
         meter.rec,
         pages,
+        new Set(attached?.gate.keys() ?? []),
       );
+      for (const [id, reason] of attached?.gate ?? []) {
+        labels.set(id, { ...labels.get(id), drop: reason });
+      }
       const dropped = [...labels.values()].filter((l) => l.drop).length;
       if (dropped) ctx.log.info("pages judged outside the business", { count: dropped });
       const groups = await groupPages(llm, plan, labels, opts, meter.rec);

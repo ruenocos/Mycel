@@ -85,6 +85,22 @@ describe("OllamaProvider", () => {
     });
     expect(await p.modelDigest("deepseek-v4.1-flash")).toBe("sha256:abc");
   });
+
+  it("treats a connection that drops while the answer streams in as a retryable network error", async () => {
+    const p = new OllamaProvider({
+      host: "http://localhost:11434",
+      fetchImpl: async () => {
+        const body = new ReadableStream({
+          start(c) {
+            c.error(new TypeError("terminated"));
+          },
+        });
+        return new Response(body);
+      },
+    });
+    const err = await p.chat(req).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "LlmProviderError", status: "network", retryable: true });
+  });
 });
 
 describe("LlmClient", () => {

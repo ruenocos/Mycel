@@ -34,6 +34,11 @@ export const MapSection = z.object({
   qdp: z.enum(["section", "micro"]),
   queries: z.array(z.string()).default([]),
   volume: z.number().int().nonnegative().default(0),
+  /**
+   * Set when this was a page of its own that answers the same search as its host: the top-10
+   * URLs both share (ADR 0003 bar), the proof for the merge (issue #42, step 4).
+   */
+  sharedUrls: z.array(z.string()).optional(),
 });
 export type MapSection = z.infer<typeof MapSection>;
 
@@ -46,8 +51,9 @@ export const MapNode = z.object({
    * "site": an existing section of the client's site (a service, category or location page).
    * It stays a hub at its URL; search data hangs new pages under it instead of replacing it.
    * "theme": a new hub page that groups pages sharing one theme.
+   * "offering": the page for one of the business's offerings (issue #42): locked under the root.
    */
-  hub: z.enum(["site", "theme"]).optional(),
+  hub: z.enum(["site", "theme", "offering"]).optional(),
   /**
    * Display name in the market language, for people: a site hub's own page heading
    * ("Projectplanning"), else a short title the model wrote from the main search.
