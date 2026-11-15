@@ -1,9 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SerpBatchPort } from "@mycel/core";
+import { type SerpBatchPort, summarizeRun } from "@mycel/core";
 import { MapEval } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
+import { describeError } from "./errors.ts";
 import { evalMapRun } from "./eval-map.ts";
 import { mapRun } from "./map.ts";
 
@@ -101,12 +102,39 @@ describe("mycel eval map", () => {
       review: true,
       port,
     });
-    expect(res.ok).toBe(true);
+    // The eval itself ran; the map misses a target (two pages share a results page), and that
+    // is a missed mark: exit code 10, so the eval can gate a change.
+    expect(res.ok).toBe(false);
+    expect(describeError(res.failure)).toMatchObject({ code: "BELOW_PASS_MARK" });
+    expect(describeError(res.failure).message).toMatch(/^the map misses \d+ of \d+ targets: /);
+    expect(describeError(res.failure).message).toContain("duplicateIntentPairs");
+    expect(summarizeRun(join(dir, "runs"), res.runId).status).toBe("ok");
     const e = MapEval.parse(JSON.parse(readFileSync(res.out as string, "utf8")));
     expect(e.metrics.duplicateIntentPairs.value).toBe(1);
     expect(e.metrics.existingWithJob.of).toBeGreaterThan(0);
     expect(res.lines.join("\n")).toContain("page pairs sharing 3+ top-10 results");
     expect(existsSync(join(dir, "map-review.seo.txt"))).toBe(true);
     expect(existsSync(join(dir, "map-review.owner.txt"))).toBe(true);
+    // Its files are named for the runner, and the numbers are there for --json.
+    expect(res.outputs).toEqual({
+      eval: join(dir, "map-eval.json"),
+      "review seo": join(dir, "map-review.seo.txt"),
+      "review owner": join(dir, "map-review.owner.txt"),
+    });
+    expect(res.data).toMatchObject({
+      metrics: { duplicateIntentPairs: 1 },
+      missed: expect.arrayContaining(["duplicateIntentPairs"]),
+    });
+
+    // A missing map is an input error with a fix, raised before any run starts.
+    const missing = await evalMapRun({
+      runsDir: join(dir, "runs"),
+      mapFile: join(dir, "nope.json"),
+    }).catch((err: unknown) => describeError(err));
+    expect(missing).toMatchObject({
+      code: "INPUT_MISSING",
+      message: `no topical map at ${join(dir, "nope.json")}`,
+      fix: "run mycel map first, or pass the path of the file it wrote",
+    });
   });
 });

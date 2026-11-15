@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   FakeProvider,
@@ -11,7 +11,7 @@ import {
   applyOwnerAnswers,
   businessProposeStep,
   CORE_VERSION,
-  formatTimeline,
+  MycelError,
   RunStore,
   runStep,
   scoreProfile,
@@ -27,6 +27,12 @@ import {
   SitePages,
 } from "@mycel/schema";
 import { z } from "zod";
+import { CONTEXT_FILE } from "./cluster.ts";
+import { backupFile } from "./context.ts";
+import { RESEARCH_FILE } from "./filter.ts";
+import { command, readInput } from "./input.ts";
+import { PAGES_FILE } from "./research.ts";
+import type { CommandResult } from "./run-command.ts";
 
 /**
  * `mycel business propose | apply | score | simulate` (issue #42, step 1). AI pre-fills the
@@ -36,20 +42,28 @@ import { z } from "zod";
  * records who gave it.
  */
 
-const readJson = (path: string) => {
-  if (!existsSync(path)) throw new Error(`no file at ${path}`);
-  return JSON.parse(readFileSync(path, "utf8"));
+const PROFILE = { name: "business profile", writtenBy: "mycel business propose" };
+const ANSWERS = {
+  name: "owner answers file",
+  writtenBy: "the setup (for a test client: mycel business simulate)",
 };
+const ANSWER_KEY = { name: "business answer key", writtenBy: "hand, in a fixture folder" };
+
 const writeJson = (path: string, value: unknown) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 };
 const isUrl = (s: string) => /^https?:\/\//.test(s);
 
-/** Reads a profile file; a "$comment" key (answer keys carry one) is ignored. */
-export function readProfile(path: string): BusinessProfile {
-  const { $comment: _c, ...rest } = readJson(path) as Record<string, unknown>;
-  return BusinessProfile.parse(rest);
+/** A profile file; a "$comment" key (answer keys carry one) is ignored. */
+const ProfileFile = z
+  .record(z.string(), z.unknown())
+  .transform(({ $comment: _c, ...rest }) => rest)
+  .pipe(BusinessProfile);
+
+/** Reads a profile file: a proposal, a confirmed profile or (with `kind`) an answer key. */
+export function readProfile(path: string, kind = PROFILE): BusinessProfile {
+  return readInput(path, ProfileFile, kind);
 }
 
 /**
@@ -57,7 +71,7 @@ export function readProfile(path: string): BusinessProfile {
  * when the context doesn't carry one itself.
  */
 export function readContextWithBusiness(contextFile: string): ClientContext {
-  const context = ClientContext.parse(readJson(contextFile));
+  const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
   const file = join(dirname(contextFile), "business.json");
   if (context.business || !existsSync(file)) return context;
   return { ...context, business: readProfile(file) };
@@ -118,15 +132,23 @@ export interface BusinessProposeOptions {
   debug?: boolean;
 }
 
-export async function businessPropose(opts: BusinessProposeOptions) {
+export interface BusinessProposeResult extends CommandResult {
+  runId: string;
+  out?: string;
+}
+
+export async function businessPropose(
+  opts: BusinessProposeOptions,
+): Promise<BusinessProposeResult> {
   const env = opts.env ?? process.env;
-  const context = ClientContext.parse(readJson(opts.contextFile));
+  const context = readInput(opts.contextFile, ClientContext, CONTEXT_FILE);
   const dir = dirname(opts.contextFile);
   const researchFile =
     opts.researchFile ??
     (existsSync(join(dir, "research.json")) ? join(dir, "research.json") : undefined);
   const queries = researchFile
-    ? z.array(Query).parse((readJson(researchFile) as { queries?: unknown }).queries ?? [])
+    ? readInput(researchFile, z.object({ queries: z.array(Query).default([]) }), RESEARCH_FILE)
+        .queries
     : [];
   const run = RunStore.create({
     runsDir: opts.runsDir,
@@ -154,7 +176,7 @@ export async function businessPropose(opts: BusinessProposeOptions) {
         });
         return (await wp.readSite(ctx)).pages;
       }
-      return SitePages.parse(readJson(join(opts.site, "pages.json"))).pages;
+      return readInput(join(opts.site, "pages.json"), SitePages, PAGES_FILE).pages;
     });
     lines.push(`evidence    ${pages.length} pages, ${queries.length} searches`);
     const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
@@ -166,51 +188,101 @@ export async function businessPropose(opts: BusinessProposeOptions) {
     });
     out = opts.out ?? join(dir, "business.proposed.json");
     writeJson(out, profile);
-    lines.push(...profileLines(profile), `proposal    ${out}`);
+    lines.push(...profileLines(profile));
   } catch (err) {
     failure = err;
   }
   const meta = run.finish(failure);
-  if (failure) lines.push(`failed      ${(failure as Error).message}`);
+  const answers = out ? join(dirname(out), "owner-answers.json") : "";
   return {
     runId: run.runId,
     ok: meta.status === "ok",
-    ...(out ? { out } : {}),
     lines,
-    timeline: formatTimeline(opts.runsDir, run.runId),
+    ...(out
+      ? {
+          out,
+          outputs: { proposal: out },
+          next: [
+            {
+              command: command("business apply", out, "--answers", answers),
+              note: `once the owner's answers are in ${answers}: the setup writes them (a test client's owner is played by mycel business simulate)`,
+            },
+          ],
+        }
+      : {}),
+    ...(failure !== undefined ? { failure } : {}),
   };
+}
+
+export interface BusinessFileResult extends CommandResult {
+  out: string;
+}
+
+/**
+ * A confirmed profile is the owner's own answers (ADR 0014): a user decision, which survives
+ * re-runs. Refuse to replace it unless forced.
+ */
+export function assertProfileReplaceable(file: string, force = false): void {
+  if (force || !existsSync(file)) return;
+  let why: string;
+  try {
+    const current = readProfile(file);
+    if (!current.confirmed) return;
+    why = `was confirmed by ${current.confirmed.by} on ${current.confirmed.at.slice(0, 10)}`;
+  } catch {
+    // Not a profile this version can read. Whatever it is, it is someone's file: keep it.
+    why = "isn't a business profile this version can read";
+  }
+  throw new MycelError("WOULD_REPLACE", `${file} ${why}; applying answers would replace it`, {
+    fix: "use --out for another file, or --force to replace it (the current file is kept as a backup)",
+  });
 }
 
 /**
  * Applies the owner's answers (a file) to a proposal and writes the confirmed business.json.
- * `by` names who answered; the file's own `by` must match when both are given.
+ * `by` names who answered; the file's own `by` must match when both are given. A profile that
+ * is already confirmed is replaced only with `force`, and then a backup is kept next to it.
  */
 export function businessApply(opts: {
   proposedFile: string;
   answersFile: string;
   by?: string;
   out?: string;
-}) {
+  force?: boolean;
+}): BusinessFileResult {
   const proposed = readProfile(opts.proposedFile);
-  const answers = OwnerAnswers.parse(readJson(opts.answersFile));
+  const answers = readInput(opts.answersFile, OwnerAnswers, ANSWERS);
   if (opts.by && opts.by !== answers.by) {
-    throw new Error(`--by "${opts.by}" doesn't match the answers file (by "${answers.by}")`);
+    throw new MycelError(
+      "INPUT_INVALID",
+      `--by "${opts.by}" doesn't match the answers file (by "${answers.by}")`,
+      { fix: "pass the name the answers were given under, or leave --by out" },
+    );
   }
   const profile = applyOwnerAnswers(proposed, answers);
   const out = opts.out ?? join(dirname(opts.proposedFile), "business.json");
+  assertProfileReplaceable(out, opts.force);
+  const backup = backupFile(out);
   writeJson(out, profile);
   return {
+    ok: true,
     out,
     lines: [
       `confirmed   by ${answers.by} at ${answers.at} (answers from ${opts.answersFile})`,
       ...profileLines(profile),
-      `profile     ${out}`,
+      ...(backup ? [`backup      ${backup} (the profile that was there)`] : []),
     ],
+    outputs: { profile: out },
+    next: [{ note: "later steps read business.json when it sits next to context.json" }],
   };
 }
 
 export function businessScore(opts: { profileFile: string; keyFile: string; language: string }) {
-  const s = scoreProfile(readProfile(opts.profileFile), readProfile(opts.keyFile), opts.language);
+  const s = scoreProfile(
+    readProfile(opts.profileFile),
+    readProfile(opts.keyFile, ANSWER_KEY),
+    opts.language,
+  );
   const pct = (n: number | null) => (n === null ? "n/a" : `${Math.round(n * 100)}%`);
   const lines = [
     `offerings   recall ${pct(s.offerings.recall)}, precision ${pct(s.offerings.precision)}`,
@@ -220,7 +292,9 @@ export function businessScore(opts: { profileFile: string; keyFile: string; lang
     `places      recall ${pct(s.places.recall)}${s.places.missed.length ? ` (missed: ${s.places.missed.join(", ")})` : ""}`,
     `specific    ${pct(s.specificity)} of offering fields filled; ${s.unknownFields} unknown fields; ${s.openQuestions} open questions`,
   ];
-  return { score: s, lines };
+  return { ok: true, score: s, lines, data: { score: s } } satisfies CommandResult & {
+    score: typeof s;
+  };
 }
 
 /** Writes the answers a test client's owner gives, played from its answer key. */
@@ -230,20 +304,22 @@ export function businessSimulate(opts: {
   language: string;
   by?: string;
   out?: string;
-}) {
+}): BusinessFileResult {
   const answers = simulateOwner(
     readProfile(opts.proposedFile),
-    readProfile(opts.keyFile),
+    readProfile(opts.keyFile, ANSWER_KEY),
     opts.language,
     ...(opts.by ? [opts.by] : []),
   );
   const out = opts.out ?? join(dirname(opts.proposedFile), "owner-answers.json");
   writeJson(out, answers);
   return {
+    ok: true,
     out,
     lines: [
       `owner       ${answers.removed.length} removed, ${answers.merged.length} merged into another, ${answers.edits.length} filled in, ${answers.added.length} added, top: ${answers.top.join(", ") || "none"}`,
-      `answers     ${out}`,
     ],
+    outputs: { answers: out },
+    next: [{ command: command("business apply", opts.proposedFile, "--answers", out) }],
   };
 }

@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { interruptActiveRuns, setRunProgress } from "@mycel/core";
-import { CommanderError } from "commander";
-import { buildProgram } from "./program.ts";
+import { runCli } from "./program.ts";
 
 // Local keys (never committed). Real env vars win.
 if (existsSync(".env")) process.loadEnvFile(".env");
@@ -30,11 +29,4 @@ for (const [signal, code] of [
   });
 }
 
-try {
-  await buildProgram().parseAsync(process.argv);
-} catch (err) {
-  // commander already printed its message. Help and --version end here with 0; a wrong flag
-  // or argument is a usage error (exit code 2). Anything else is a bug: let it show.
-  if (!(err instanceof CommanderError)) throw err;
-  process.exitCode = err.exitCode === 0 ? 0 : 2;
-}
+await runCli(process.argv);

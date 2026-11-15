@@ -181,6 +181,55 @@ describe("runCommand", () => {
     expect(c.state.exitCode).toBe(11);
   });
 
+  it("with --json: one object instead of text, notes as warnings, the error instead of next", async () => {
+    const c = capture();
+    const json = { command: "cluster", version: "0.0.0+abc1234" };
+    await runCommand(c.io, { runsDir: tmp(), json }, () => ({
+      ok: true,
+      lines: [
+        "note        context is not confirmed: trial run",
+        "warning     2 pages blocked",
+        "clusters    12",
+      ],
+      outputs: { clusters: "clients/x/clusters.json" },
+      data: { clusters: 12 },
+      next: [{ command: "mycel map clients/x/clusters.json" }],
+    }));
+    expect(c.err).toEqual([]);
+    expect(c.out).toHaveLength(1);
+    expect(JSON.parse(c.out[0] ?? "")).toEqual({
+      status: "ok",
+      command: "cluster",
+      version: "0.0.0+abc1234",
+      exitCode: 0,
+      outputs: { clusters: "clients/x/clusters.json" },
+      summary: ["clusters    12"],
+      data: { clusters: 12 },
+      costUsd: 0,
+      steps: [],
+      warnings: ["context is not confirmed: trial run", "2 pages blocked"],
+      next: [{ command: "mycel map clients/x/clusters.json" }],
+    });
+
+    const failed = capture();
+    await runCommand(failed.io, { runsDir: tmp(), json }, () => {
+      throw new BudgetExceededError("DataforSEO run budget of $1 reached");
+    });
+    // The error is in the object; stderr stays for progress and logs.
+    expect(failed.err).toEqual([]);
+    expect(failed.state.exitCode).toBe(11);
+    expect(JSON.parse(failed.out[0] ?? "")).toMatchObject({
+      status: "failed",
+      exitCode: 11,
+      next: [],
+      error: {
+        code: "BUDGET_EXCEEDED",
+        message: "DataforSEO run budget of $1 reached",
+        transient: false,
+      },
+    });
+  });
+
   it("keeps a long message readable under its label", () => {
     const lines = formatError({ code: "RUN_FAILED", message: "one\ntwo", transient: true });
     expect(lines).toEqual([

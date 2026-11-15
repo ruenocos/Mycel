@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RunStore, StepContext } from "./log/run-store.ts";
@@ -133,4 +133,23 @@ export async function runStep<I extends z.ZodType, O extends z.ZodType>(
     }
     throw new StepValidationError(def.name, "output", lastIssues);
   });
+}
+
+/**
+ * The version of a step as a run saved it, or undefined when the run has no output for it.
+ * Read from the head of output.json: the version is written before the output itself, and the
+ * output can be megabytes.
+ */
+export function savedStepVersion(runDir: string, step: string): string | undefined {
+  const file = join(runDir, step, "output.json");
+  if (!existsSync(file)) return undefined;
+  const head = Buffer.alloc(512);
+  const fd = openSync(file, "r");
+  let length = 0;
+  try {
+    length = readSync(fd, head, 0, head.length, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return /"stepVersion":\s*"([^"]*)"/.exec(head.toString("utf8", 0, length))?.[1];
 }

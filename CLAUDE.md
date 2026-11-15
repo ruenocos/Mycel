@@ -18,6 +18,14 @@ A topical-map-first SEO tool for Dutch SMBs. Data first, LLM second. A human app
 - **User decisions survive re-runs** through the override layer; each run shows a diff against the previous one.
 - **English inside, market language out (ADR 0013).** Prompts, reasoning and step-to-step data are in English. Anything a user or reader sees is in the market language (Dutch by default). Source text, keywords and terms of art are never translated. Nothing is hardcoded: market (country, language, city) comes from the context.
 
+## CLI rules (ADR 0015)
+
+- **One runner.** Every command goes through `runCommand()` and returns a `CommandResult`: summary lines, `outputs`, `next`. It never prints its own ending and never sets the exit code itself.
+- **Errors carry a fix.** Throw `MycelError` with a code and a fix; read input files with `readInput()`. A new kind of failure gets a code and an exit code, never a reused one.
+- **stdout is the result.** Progress, logs and questions go to stderr. With `--json` stdout is one `CliOutput` object: fields are added, never renamed or removed, and it carries paths and numbers, not the dataset.
+- **Every command takes `--debug` and `--json`** and has a case in `apps/cli/src/json.test.ts`. A new pipeline step is also added to `packages/core/src/pipeline/status.ts`, so `mycel status` knows it.
+- **Money is asked about first.** Before a paid run use `--dry-run`; after a failed research run use `--resume`. `next` never contains a paid flag: buying is a person's call.
+
 ## Never commit
 
 Client data (GSC exports, crawls, baselines, `runs/`), API keys or `.env` files, personal notes (`_notities-wons/`), research dumps.

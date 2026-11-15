@@ -8,6 +8,7 @@ export * from "./evals/writing.ts";
 export * from "./filter/index.ts";
 export * from "./log/index.ts";
 export * from "./map/index.ts";
+export * from "./pipeline/status.ts";
 export * from "./research/index.ts";
 export * from "./step.ts";
 
