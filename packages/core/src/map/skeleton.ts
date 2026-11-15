@@ -40,8 +40,20 @@ export interface Skeleton {
 const MIN_MODIFIER = 3;
 const MAX_MODIFIERS = 15;
 
+/**
+ * Two forms of one long word: the same start and short, different endings ("fysiotherapie" and
+ * "fysiotherapeut", the service and the person who gives it). Stems already match plurals.
+ */
+export function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 10) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i >= 9 && a.length - i <= 3 && b.length - i <= 3;
+}
+
 export const covers = (words: Set<string>, key: Set<string>) =>
-  key.size > 0 && [...key].every((k) => words.has(k));
+  key.size > 0 && [...key].every((k) => words.has(k) || [...words].some((w) => sameWord(w, k)));
 
 export function buildSkeleton(
   business: BusinessProfile,

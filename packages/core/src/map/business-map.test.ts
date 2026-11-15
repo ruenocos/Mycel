@@ -16,7 +16,7 @@ import { runStep } from "../step.ts";
 import { attachToBusiness, lockOfferingHubs } from "./attach.ts";
 import { mergeSameIntent } from "./intent.ts";
 import { planMaps, tokens } from "./plan.ts";
-import { buildSkeleton, cellOf } from "./skeleton.ts";
+import { buildSkeleton, cellOf, sameWord } from "./skeleton.ts";
 import { mapStep } from "./step.ts";
 
 // A neutral test business (not one of the test clients): a bike workshop.
@@ -154,6 +154,10 @@ describe("business skeleton", () => {
     expect(sk.modifiers.get("fietsreparatie")?.[0]?.word).toBe([...tokens("kosten", "nl")][0]);
     const t = (s: string) => tokens(s, "nl");
     expect(cellOf(t("elektrische fietsreparatie"), sk)?.id).toBe("fietsreparatie/elektrische");
+    // The person who gives a service is the service ("fysiotherapeut" ~ "fysiotherapie").
+    expect(sameWord("fysiotherapeut", "fysiotherapie")).toBe(true);
+    expect(sameWord("projectbedrijf", "projectbeheer")).toBe(false);
+    expect(sameWord("dakdekker", "dakdekking")).toBe(false);
     // A bare attribute value without its offering is not claimed.
     expect(cellOf(t("elektrische auto"), sk)).toBeUndefined();
   });
