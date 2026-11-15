@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BusinessProfile } from "./business.ts";
 
 /** Where the client competes. Used in every DataforSEO call; never hardcoded (CLAUDE.md). */
 export const Market = z.object({
@@ -48,6 +49,8 @@ export const ClientContext = z.object({
   /** Competitor domains, e.g. "afas.nl". */
   competitors: z.array(z.string().min(1)).default([]),
   answers: z.array(ContextAnswer).default([]),
+  /** The specific business profile (issue #42): offerings, no-go list, places, facts. */
+  business: BusinessProfile.optional(),
   confirmed: z
     .object({
       by: z.string().min(1),
