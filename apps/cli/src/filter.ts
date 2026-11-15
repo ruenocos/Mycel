@@ -101,7 +101,7 @@ export async function filterRun(opts: FilterOptions): Promise<FilterResult> {
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
   const lines: string[] = [];
-  if (!context.confirmed) lines.push("note        context is not confirmed: dry run");
+  if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
   let out: string | undefined;
   let failure: unknown;
   try {

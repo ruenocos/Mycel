@@ -36,7 +36,10 @@ export class StepValidationError extends Error {
 }
 
 export interface RunStepOptions {
-  /** A previous run's directory; its saved output for this step is reused when valid and same version. */
+  /**
+   * A previous run's directory. Its saved output for this step is reused when the step version
+   * is the same, the input is the same and the output is still valid. Anything else runs again.
+   */
   resumeFromDir?: string;
 }
 
@@ -47,9 +50,19 @@ interface SavedOutput {
   output: unknown;
 }
 
-function readSaved(path: string): SavedOutput | null {
+function readJson(path: string): unknown {
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf8")) as SavedOutput;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/** JSON with sorted keys, so two equal inputs compare equal whatever order their keys came in. */
+function stable(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
 }
 
 const writeJson = (path: string, value: unknown) =>
@@ -63,26 +76,41 @@ export async function runStep<I extends z.ZodType, O extends z.ZodType>(
   opts: RunStepOptions = {},
 ): Promise<z.output<O>> {
   return run.step(def.name, async (ctx) => {
-    if (opts.resumeFromDir) {
-      const saved = readSaved(join(opts.resumeFromDir, def.name, "output.json"));
-      if (saved && saved.stepVersion === def.version) {
-        const parsed = def.output.safeParse(saved.output);
-        if (parsed.success) {
-          writeJson(join(ctx.dir, "output.json"), { ...saved, resumedFrom: opts.resumeFromDir });
-          ctx.log.info("reused saved output", { from: opts.resumeFromDir, version: def.version });
-          return parsed.data;
-        }
-        ctx.log.warn("saved output no longer valid, running step again", {
-          issues: z.prettifyError(parsed.error),
-        });
-      }
-    }
-
     const parsedInput = def.input.safeParse(input);
     if (!parsedInput.success) {
       throw new StepValidationError(def.name, "input", z.prettifyError(parsedInput.error));
     }
     writeJson(join(ctx.dir, "input.json"), parsedInput.data);
+
+    if (opts.resumeFromDir) {
+      const from = join(opts.resumeFromDir, def.name);
+      const saved = readJson(join(from, "output.json")) as SavedOutput | null;
+      // Why a saved output is not used is logged, so "it ran again" is never a mystery.
+      let skip: string | undefined;
+      if (!saved) skip = "the earlier run has no saved output for this step";
+      else if (saved.stepVersion !== def.version) {
+        skip = `the step changed since (version ${saved.stepVersion}, now ${def.version})`;
+      } else if (stable(readJson(join(from, "input.json"))) !== stable(parsedInput.data)) {
+        // Same step, other input: its output answers a different question.
+        skip = "the input is not the same as in the earlier run";
+      }
+      if (saved && !skip) {
+        const parsed = def.output.safeParse(saved.output);
+        if (parsed.success) {
+          writeJson(join(ctx.dir, "output.json"), { ...saved, resumedFrom: opts.resumeFromDir });
+          ctx.log.event("info", "step.reused", "reused saved output", {
+            from: opts.resumeFromDir,
+            version: def.version,
+          });
+          return parsed.data;
+        }
+        ctx.log.warn("saved output no longer valid, running step again", {
+          issues: z.prettifyError(parsed.error),
+        });
+      } else {
+        ctx.log.info(`not reusing the earlier run: ${skip}`, { from: opts.resumeFromDir });
+      }
+    }
 
     const maxAttempts = def.maxAttempts ?? 1;
     let lastIssues = "";

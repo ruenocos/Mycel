@@ -6,23 +6,38 @@ import {
   LlmClient,
   type LlmProvider,
   loadServiceAccount,
+  monthSpendUsd,
   OllamaProvider,
   WordPressClient,
 } from "@mycel/connectors";
 import {
   CORE_VERSION,
   cleanDomain,
+  defineStep,
   isReservedHost,
+  listRuns,
   MycelError,
   type ResearchPort,
   RunStore,
+  readRunMeta,
   researchSeedsStep,
   researchStep,
+  resolveRunId,
   runStep,
+  type StepContext,
+  summarizeRun,
 } from "@mycel/core";
-import { ClientContext, type ResearchDataset, SitePages } from "@mycel/schema";
+import { ClientContext, type ResearchDataset, SitePage, SitePages } from "@mycel/schema";
+import { z } from "zod";
 import { CONTEXT_FILE } from "./cluster.ts";
-import { costLine, dataforseoFromEnv, KEYS_FIX, runBudget } from "./dataforseo.ts";
+import {
+  costLine,
+  DRY_RUN,
+  dataforseoFromEnv,
+  KEYS_FIX,
+  monthlyBudget,
+  runBudget,
+} from "./dataforseo.ts";
 import { assertConfirmed, command, readInput } from "./input.ts";
 import type { CommandResult } from "./run-command.ts";
 
@@ -32,6 +47,28 @@ import type { CommandResult } from "./run-command.ts";
  */
 
 export const PAGES_FILE = { name: "pages file", writtenBy: "a fixture (pages.json)" };
+
+/**
+ * What the run reads before it buys anything: the site's pages and, when connected, its Search
+ * Console queries. A step with a saved output, so `--resume` continues with the same sources
+ * and the seeds built on them stay valid.
+ */
+const SOURCES_STEP = "research-sources";
+const SourcesInput = z.object({ site: z.string(), gsc: z.boolean() });
+const Sources = z.object({
+  pages: z.array(SitePage.pick({ url: true, kind: true, title: true, h1: true })),
+  gscRows: z
+    .array(
+      z.object({
+        query: z.string(),
+        clicks: z.number(),
+        impressions: z.number(),
+        position: z.number(),
+      }),
+    )
+    .optional(),
+});
+type Sources = z.infer<typeof Sources>;
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
 const isUrl = (s: string) => /^https?:\/\//i.test(s);
@@ -60,8 +97,16 @@ export interface ResearchOptions {
   gsc?: boolean;
   /** Paid SERP calls (CLAUDE.md: explicit flag). Without it, only cached SERPs are used. */
   liveSerp?: boolean;
+  /** Show what is known about the cost and stop: no run, no call, no file. */
+  dryRun?: boolean;
+  /**
+   * An earlier research run of this client (id, prefix or "latest"). Steps it finished, on the
+   * same input, are not done again: the seeds stay the same, so what was bought is found in the
+   * cache instead of bought again for new seeds.
+   */
+  resume?: string;
   budgetUsd?: number;
-  /** Run on a context nobody confirmed yet (dry runs). */
+  /** Run on a context nobody confirmed yet (trial runs). */
   allowUnconfirmed?: boolean;
   cacheDir?: string;
   debug?: boolean;
@@ -69,11 +114,73 @@ export interface ResearchOptions {
   today?: Date;
   /** Tests pass a stub instead of DataforSEO. */
   port?: ResearchPort;
+  /** Tests pass scripted model providers. */
+  llmProviders?: LlmProvider[];
 }
 
 export interface ResearchResult extends CommandResult {
-  runId: string;
+  /** Absent for a dry run: nothing ran. */
+  runId?: string;
   out?: string;
+}
+
+/**
+ * What a research run costs can't be counted before it runs: the model picks the seeds, and the
+ * seeds decide which calls are made. What can be said honestly: what the last run for this
+ * client cost, and the ceiling this run would stop at.
+ */
+function preview(
+  opts: ResearchOptions,
+  host: string,
+  budgetUsd: number,
+  cacheDir: string,
+  env: NodeJS.ProcessEnv,
+): ResearchResult {
+  const earlier = listRuns(opts.runsDir).filter(
+    (r) => r.command === "research" && r.client === host,
+  );
+  const last = earlier.find((r) => r.status === "ok") ?? earlier[0];
+  const lines = [
+    DRY_RUN,
+    "cost        can't be counted up front: it depends on the seeds the model picks",
+  ];
+  if (last) {
+    const sum = summarizeRun(opts.runsDir, last.runId);
+    const apiCalls = sum.steps.reduce((total, s) => total + s.apiCalls, 0);
+    const cached = sum.steps.reduce((total, s) => total + s.cachedApiCalls, 0);
+    lines.push(
+      `last time   $${last.costUsd.toFixed(4)} on ${last.startedAt.slice(0, 10)} (${sum.status}): ${apiCalls.toLocaleString("en-US")} API calls, ${cached.toLocaleString("en-US")} from cache`,
+      `            run ${last.runId}`,
+    );
+  } else {
+    lines.push(`last time   no earlier research run for ${host} in ${opts.runsDir}`);
+  }
+  const month = monthSpendUsd(join(cacheDir, "dataforseo"), opts.today);
+  lines.push(
+    `ceiling     --budget ${budgetUsd}: buying stops there (this month $${month.toFixed(2)} of $${monthlyBudget(env)})`,
+  );
+  return {
+    ok: true,
+    lines,
+    next: [
+      { note: "the same command without --dry-run" },
+      { note: "buying is a person's call: ask before running it" },
+    ],
+  };
+}
+
+/** The run directory to continue from, after checking it is a research run of this client. */
+function resumeDir(runsDir: string, idOrPrefix: string, host: string): string {
+  const runId = resolveRunId(runsDir, idOrPrefix);
+  const meta = readRunMeta(runsDir, runId);
+  if (meta.command !== "research" || meta.client !== host) {
+    throw new MycelError(
+      "INPUT_INVALID",
+      `run ${runId} is "${meta.command}" for ${meta.client}, not a research run for ${host}`,
+      { fix: "mycel logs lists the runs: pass a research run of this client to --resume" },
+    );
+  }
+  return join(runsDir, runId);
 }
 
 export function summarize(d: ResearchDataset): string[] {
@@ -110,6 +217,10 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
   const context = readInput(opts.contextFile, ClientContext, CONTEXT_FILE);
   assertConfirmed(context, opts.contextFile, opts.allowUnconfirmed);
   const host = cleanDomain(new URL(context.site.url).hostname);
+  if (opts.dryRun) return preview(opts, host, budgetUsd, cacheDir, env);
+  // Before the new run exists, or "latest" would point at the run that is just starting.
+  const resumeFromDir = opts.resume ? resumeDir(opts.runsDir, opts.resume, host) : undefined;
+  const resumeOpts = resumeFromDir ? { resumeFromDir } : {};
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: host,
@@ -122,10 +233,11 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       provider: opts.provider,
       liveSerp: !!opts.liveSerp,
       budgetUsd,
+      ...(resumeFromDir ? { resumedFrom: resumeFromDir } : {}),
     },
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
-  if (!context.confirmed) lines.push("note        context is not confirmed: dry run");
+  if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
 
   const dfs = dataforseoFromEnv(env, { cacheDir, budgetUsd, allowLiveSerp: !!opts.liveSerp });
   const port: ResearchPort | undefined = opts.port ?? dfs;
@@ -139,8 +251,8 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       });
     }
     const data = port;
-    const sources = await run.step("research-sources", async (ctx) => {
-      const site = opts.site ?? context.site.url;
+    const site = opts.site ?? context.site.url;
+    const readSources = async (ctx: StepContext) => {
       let pages: SitePages["pages"];
       if (isUrl(site)) {
         if (isReservedHost(cleanDomain(new URL(site).hostname))) {
@@ -185,9 +297,21 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       }
       return {
         pages: pages.map((p) => ({ url: p.url, kind: p.kind, title: p.title, h1: p.h1 })),
-        gscRows,
+        ...(gscRows ? { gscRows } : {}),
       };
-    });
+    };
+    const sources: Sources = await runStep(
+      run,
+      defineStep({
+        name: SOURCES_STEP,
+        version: "1",
+        input: SourcesInput,
+        output: Sources,
+        run: (_input, ctx) => readSources(ctx),
+      }),
+      { site, gsc: opts.gsc !== false },
+      resumeOpts,
+    );
 
     // The client's own ranked keywords feed the seeds; the call is cached, so collect reuses it.
     const ownRanked = isReservedHost(host)
@@ -196,8 +320,11 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
           data.rankedKeywords(host, context.market, ctx),
         );
 
-    const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
-    const seeds = await runStep(run, researchSeedsStep(llm), {
+    const llm = new LlmClient({
+      providers: opts.llmProviders ?? providers(env),
+      defaultProvider: opts.provider,
+    });
+    const seedsInput = {
       context,
       data: {
         ...(sources.gscRows
@@ -216,14 +343,20 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       },
       model: opts.model,
       noModel: !!opts.noModel,
-    });
+    };
+    const seeds = await runStep(run, researchSeedsStep(llm), seedsInput, resumeOpts);
 
-    const dataset = await runStep(run, researchStep(data), {
-      context,
-      seeds,
-      pages: sources.pages,
-      ...(sources.gscRows ? { gscRows: sources.gscRows } : {}),
-    });
+    const dataset = await runStep(
+      run,
+      researchStep(data),
+      {
+        context,
+        seeds,
+        pages: sources.pages,
+        ...(sources.gscRows ? { gscRows: sources.gscRows } : {}),
+      },
+      resumeOpts,
+    );
     out = opts.out ?? join(dirname(opts.contextFile), "research.json");
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify(dataset, null, 2)}\n`);
@@ -233,6 +366,8 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
     failure = err;
   }
   const meta = run.finish(failure);
+  // Worth offering only when the failed run got far enough to have something to reuse.
+  const reusable = meta.steps.some((s) => s.name === SOURCES_STEP && s.status === "ok");
   return {
     runId: run.runId,
     ok: meta.status === "ok",
@@ -241,5 +376,10 @@ export async function research(opts: ResearchOptions): Promise<ResearchResult> {
       ? { out, outputs: { research: out }, next: [{ command: command("filter", out) }] }
       : {}),
     ...(failure !== undefined ? { failure } : {}),
+    ...(failure !== undefined && reusable
+      ? {
+          retry: `the same command with --resume ${run.runId} (keeps the seeds, so what was bought is reused)`,
+        }
+      : {}),
   };
 }

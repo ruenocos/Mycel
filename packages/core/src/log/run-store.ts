@@ -56,6 +56,18 @@ export function setRunProgress(sink: ((line: string) => void) | undefined): void
   progress = sink;
 }
 
+/** Runs that are busy in this process, so a signal handler can mark them before the exit. */
+const active = new Set<RunStore>();
+
+/**
+ * Marks every run that is still busy as "interrupted" and returns them. For the CLI's SIGINT and
+ * SIGTERM handlers: without it a stopped run would say "running" for ever. Sync on purpose, a
+ * signal handler has no time to wait.
+ */
+export function interruptActiveRuns(signal: string): RunMeta[] {
+  return [...active].map((run) => run.interrupt(signal));
+}
+
 export function newRunId(now: Date = new Date()): string {
   const stamp = now.toISOString().slice(0, 19).replaceAll(":", "-");
   return `${stamp}Z-${randomBytes(2).toString("hex")}`;
@@ -111,10 +123,12 @@ export class RunStore {
       cliVersion: opts.cliVersion,
       startedAt: this.now().toISOString(),
       status: "running",
+      pid: process.pid,
       costUsd: 0,
       steps: [],
     };
     this.save();
+    active.add(this);
     this.log.event("info", "run.start", `run started: ${opts.command} for ${opts.client}`, {
       gitCommit: this.meta.gitCommit,
       cliVersion: opts.cliVersion,
@@ -180,6 +194,7 @@ export class RunStore {
     this.meta.status = failed ? "failed" : "ok";
     if (err !== undefined) this.meta.error = redact(serializeError(err), this.secrets);
     this.save();
+    active.delete(this);
     this.log.event(
       failed ? "error" : "info",
       "run.end",
@@ -187,6 +202,25 @@ export class RunStore {
       { costUsd: this.meta.costUsd, steps: this.meta.steps.length },
       err,
     );
+    return this.meta;
+  }
+
+  /** Stopped from outside while busy: say so on disk. What was paid for stays in the cache. */
+  interrupt(signal: string): RunMeta {
+    const at = this.now().toISOString();
+    this.meta.endedAt = at;
+    this.meta.status = "interrupted";
+    for (const step of this.meta.steps) {
+      if (step.status !== "running") continue;
+      step.status = "interrupted";
+      step.endedAt = at;
+    }
+    this.save();
+    active.delete(this);
+    this.log.event("warn", "run.interrupted", `run interrupted (${signal})`, {
+      costUsd: this.meta.costUsd,
+      steps: this.meta.steps.length,
+    });
     return this.meta;
   }
 

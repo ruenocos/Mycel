@@ -1,5 +1,12 @@
 import { createInterface } from "node:readline/promises";
-import { CORE_VERSION, formatTimeline, type LogLevel, listRuns, resolveRunId } from "@mycel/core";
+import {
+  CORE_VERSION,
+  formatTimeline,
+  type LogLevel,
+  listRuns,
+  resolveRunId,
+  runStatus,
+} from "@mycel/core";
 import { Command, Option } from "commander";
 import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
@@ -22,7 +29,12 @@ const provider = () =>
 const DEBUG = ["--debug", "follow the log on stderr, and show the stack of an error"] as const;
 const UNCONFIRMED = [
   "--allow-unconfirmed",
-  "run on a context nobody confirmed yet (dry run)",
+  "run on a context nobody confirmed yet (a trial run)",
+] as const;
+
+const DRY_RUN = [
+  "--dry-run",
+  "show what the run would cost and stop: nothing is bought, no file is written",
 ] as const;
 
 const examples = (...lines: string[]) => `\nExamples:\n${lines.map((l) => `  ${l}`).join("\n")}\n`;
@@ -44,6 +56,9 @@ Keys live in .env (.env.example lists every key). Check them before a paid run:
   DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD: search data for research and cluster --live-serp
   (context propose uses it when set; --no-dataforseo leaves it out)
 
+Before a paid run, ask what it costs: add --dry-run to research or cluster. A research run
+that failed continues with --resume <run>. A cluster run just runs again: the cache has it.
+
 Every run is saved under --runs-dir (default: runs/). Add --debug to any command to follow
 the log on stderr while it runs; mycel logs <run> --level debug shows it afterwards.
 
@@ -57,6 +72,7 @@ Exit codes:
   10  the run worked, but a quality gate or eval is below its pass mark
   11  the budget is reached, or a paid call is needed and not allowed
   75  temporary (network, rate limit): run the same command again
+ 130  interrupted (Ctrl+C); 143 when the process was told to stop
 `;
 
 export function buildProgram(
@@ -207,13 +223,20 @@ export function buildProgram(
     .option("--no-gsc", "don't use Search Console")
     .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
     .option("--budget <usd>", "DataforSEO budget for this run", "1")
+    .option(...DRY_RUN)
+    .option(
+      "--resume <run>",
+      'continue an earlier research run of this client (run id, prefix or "latest"): steps it finished are not done again, so the same seeds find their paid results in the cache',
+    )
     .option(...UNCONFIRMED)
     .option(...DEBUG)
     .addHelpText(
       "after",
       examples(
         "mycel research clients/example.com/context.json",
+        "mycel research clients/example.com/context.json --dry-run",
         "mycel research clients/example.com/context.json --live-serp --budget 2",
+        "mycel research clients/example.com/context.json --live-serp --budget 2 --resume latest",
       ),
     )
     .action(
@@ -227,6 +250,8 @@ export function buildProgram(
           gsc: boolean;
           liveSerp?: boolean;
           budget: string;
+          dryRun?: boolean;
+          resume?: string;
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
@@ -244,6 +269,8 @@ export function buildProgram(
             allowUnconfirmed: !!opts.allowUnconfirmed,
             ...(opts.site ? { site: opts.site } : {}),
             ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.dryRun ? { dryRun: true } : {}),
+            ...(opts.resume ? { resume: opts.resume } : {}),
             ...(opts.debug ? { debug: true } : {}),
           }),
         ),
@@ -297,14 +324,19 @@ export function buildProgram(
     .option("--live-serp", "allow paid SERP calls (otherwise only cached SERPs)")
     .option("--budget <usd>", "DataforSEO budget for this run", "3")
     .option("--min-shared <n>", "shared top-10 URLs for one page (ADR 0003)", "3")
+    .option(...DRY_RUN)
     .option(...UNCONFIRMED)
     .option(...DEBUG)
     .addHelpText(
       "after",
-      examples(
+      `${examples(
         "mycel cluster clients/example.com/queries.json",
+        "mycel cluster clients/example.com/queries.json --dry-run",
         "mycel cluster clients/example.com/queries.json --live-serp --budget 3",
-      ),
+      )}
+A run that stopped halfway needs no special flag: run the same command again. What was
+bought is in the cache, and SERPs that were paid for but not yet delivered are collected free.
+`,
     )
     .action(
       (
@@ -315,6 +347,7 @@ export function buildProgram(
           liveSerp?: boolean;
           budget: string;
           minShared: string;
+          dryRun?: boolean;
           allowUnconfirmed?: boolean;
           debug?: boolean;
         },
@@ -329,6 +362,7 @@ export function buildProgram(
             allowUnconfirmed: !!opts.allowUnconfirmed,
             ...(opts.context ? { contextFile: opts.context } : {}),
             ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.dryRun ? { dryRun: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
           }),
         ),
@@ -414,7 +448,7 @@ export function buildProgram(
             ok: true,
             lines: runs.map(
               (r) =>
-                `${r.runId}  ${r.status.padEnd(7)}  ${r.client}  ${r.command}  ${usd(r.costUsd)}`,
+                `${r.runId}  ${runStatus(r).padEnd(11)}  ${r.client}  ${r.command}  ${usd(r.costUsd)}`,
             ),
           };
         }

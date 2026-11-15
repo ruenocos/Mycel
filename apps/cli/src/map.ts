@@ -181,7 +181,7 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
   const lines: string[] = [];
-  if (!context.confirmed) lines.push("note        context is not confirmed: dry run");
+  if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
   if (!queriesFile) lines.push("note        no queries.json: intent falls back to the tier");
   if (!pagesFile) lines.push("note        no pages: existing pages are not linked");
   let out: string | undefined;

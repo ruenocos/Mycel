@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { planSerpBatch } from "@mycel/connectors";
 import {
   CORE_VERSION,
+  clusterSerpQueries,
   clusterStep,
   MycelError,
   RunStore,
@@ -9,7 +11,7 @@ import {
   type SerpBatchPort,
 } from "@mycel/core";
 import { ClientContext, type ClusterSet, FilteredQueries } from "@mycel/schema";
-import { costLine, dataforseoFromEnv, KEYS_FIX, runBudget } from "./dataforseo.ts";
+import { costLine, dataforseoFromEnv, KEYS_FIX, runBudget, serpPlanLines } from "./dataforseo.ts";
 import { assertConfirmed, command, readInput } from "./input.ts";
 import type { CommandResult } from "./run-command.ts";
 
@@ -52,6 +54,8 @@ export interface ClusterOptionsCli {
   contextFile?: string;
   out?: string;
   liveSerp?: boolean;
+  /** Count what the run would buy and stop: no run, no paid call, no file. */
+  dryRun?: boolean;
   budgetUsd?: number;
   minShared?: number;
   allowUnconfirmed?: boolean;
@@ -63,7 +67,8 @@ export interface ClusterOptionsCli {
 }
 
 export interface ClusterResult extends CommandResult {
-  runId: string;
+  /** Absent for a dry run: nothing ran. */
+  runId?: string;
   out?: string;
 }
 
@@ -80,8 +85,31 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
   const contextFile = opts.contextFile ?? join(dirname(opts.queriesFile), "context.json");
   const context = readInput(contextFile, ClientContext, CONTEXT_FILE);
   assertConfirmed(context, contextFile, opts.allowUnconfirmed);
+  const cacheDir = opts.cacheDir ?? ".cache";
+  if (opts.dryRun) {
+    const plan = planSerpBatch(
+      join(cacheDir, "dataforseo"),
+      clusterSerpQueries(queries),
+      context.market,
+    );
+    // The command isn't rebuilt here: the caller knows its own flags, and a rebuilt one that
+    // dropped a flag would be worse than none.
+    const next = plan.toBuy
+      ? [
+          {
+            note: `the same command without --dry-run, plus --live-serp --budget ${budgetUsd} to buy what is missing`,
+          },
+          { note: "buying is a person's call: ask before running it" },
+        ]
+      : [{ note: "the same command without --dry-run: it buys nothing" }];
+    return {
+      ok: true,
+      lines: serpPlanLines(plan, budgetUsd, env, "one per kept query"),
+      next,
+    };
+  }
   const dfs = dataforseoFromEnv(env, {
-    cacheDir: opts.cacheDir ?? ".cache",
+    cacheDir,
     budgetUsd,
     allowLiveSerp: !!opts.liveSerp,
   });
@@ -101,7 +129,7 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
   const lines: string[] = [];
-  if (!context.confirmed) lines.push("note        context is not confirmed: dry run");
+  if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
   let out: string | undefined;
   let failure: unknown;
   try {

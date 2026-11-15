@@ -24,6 +24,8 @@ export interface CommandResult {
   next?: NextStep[];
   /** Why the command isn't ok: the caught error, or a MycelError for a missed pass mark. */
   failure?: unknown;
+  /** After a failure: the command that picks the work up again without redoing what finished. */
+  retry?: string;
 }
 
 export interface CommandIo {
@@ -95,6 +97,7 @@ export async function runCommand(
       opts,
       res.runId,
     );
+    if (res.retry) io.err(row("retry", res.retry));
     return;
   }
   for (const [i, n] of (res.next ?? []).entries()) {
