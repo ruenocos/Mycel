@@ -3,6 +3,17 @@ import type { Market } from "@mycel/schema";
 import { withUserAgent } from "../http.ts";
 import type { CallRecorder } from "../recorder.ts";
 import { type CacheEntry, FileCache, requestHash } from "./cache.ts";
+import {
+  ADS_VOLUME_ENDPOINT,
+  adsHistoryPayloads,
+  cachedHistories,
+  type KeywordHistory,
+  parseAdsVolume,
+  parseTrendsExplore,
+  TRENDS_EXPLORE_ENDPOINT,
+  type TrendsExplore,
+  trendsPayload,
+} from "./history.ts";
 import { SpendLedger } from "./ledger.ts";
 import { type DfsLocation, findCity, type MarketParams, marketParams } from "./locations.ts";
 import {
@@ -197,6 +208,44 @@ export class DataforseoClient {
     const endpoint = "dataforseo_labs/google/competitors_domain/live";
     const payload = { target, ...marketParams(market), limit: opts.limit ?? 20 };
     return parseCompetitorDomains(await this.cachedLive(endpoint, payload, rec), target);
+  }
+
+  /**
+   * Every keyword history already in the cache (Labs results carry 12 months each): free, no
+   * call. Keyed by lowercased keyword.
+   */
+  cachedKeywordHistories(): Map<string, KeywordHistory> {
+    return cachedHistories(this.cache);
+  }
+
+  /**
+   * Monthly searches from Google Ads (issue #63, step 14), up to 1000 keywords per call, from
+   * `dateFrom` (YYYY-MM-DD) on. Keywords Google Ads refuses are left out, not sent.
+   */
+  async keywordHistory(
+    keywords: string[],
+    market: Market,
+    rec: CallRecorder,
+    opts: { dateFrom: string },
+  ): Promise<KeywordHistory[]> {
+    const out: KeywordHistory[] = [];
+    for (const payload of adsHistoryPayloads(keywords, market, opts.dateFrom)) {
+      out.push(...parseAdsVolume(await this.cachedLive(ADS_VOLUME_ENDPOINT, payload, rec, "all")));
+    }
+    return out;
+  }
+
+  /** Google Trends explore (issue #63, step 14): up to 5 keywords, their curve and related searches. */
+  async trendsExplore(
+    keywords: string[],
+    market: Market,
+    rec: CallRecorder,
+  ): Promise<TrendsExplore> {
+    const payload = trendsPayload(keywords, market);
+    return parseTrendsExplore(
+      payload.keywords,
+      await this.cachedLive(TRENDS_EXPLORE_ENDPOINT, payload, rec),
+    );
   }
 
   /**
@@ -571,7 +620,16 @@ export class DataforseoClient {
     }
   }
 
-  private async cachedLive(endpoint: string, payload: Record<string, unknown>, rec: CallRecorder) {
+  /**
+   * One live call, cached by request. Most endpoints answer with one result object ("first");
+   * a few, like Google Ads search volume, with one result per keyword ("all").
+   */
+  private async cachedLive(
+    endpoint: string,
+    payload: Record<string, unknown>,
+    rec: CallRecorder,
+    keep: "first" | "all" = "first",
+  ) {
     const hash = requestHash(endpoint, payload);
     const hit = this.hit(endpoint, hash, rec);
     if (hit) return hit.result;
@@ -579,7 +637,8 @@ export class DataforseoClient {
       const res = await this.request("POST", endpoint, [payload], rec, hash);
       const task = res.tasks?.[0];
       const costUsd = task?.cost ?? res.cost ?? 0;
-      return { value: { result: task?.result?.[0] ?? null, costUsd }, costUsd };
+      const result = keep === "all" ? (task?.result ?? []) : (task?.result?.[0] ?? null);
+      return { value: { result, costUsd }, costUsd };
     });
     this.cache.set(hash, {
       endpoint,

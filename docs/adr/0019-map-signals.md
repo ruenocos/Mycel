@@ -1,0 +1,14 @@
+# 0019 Map signals: the open Koray map steps as one data step before the map
+
+**Status:** accepted, 16 Nov 2026 (issue #63). Wons chose on 16 Nov to finish every map step of the 23 first and review the whole map after. (0018 is the engine ADR.)
+
+**Decision:** the map steps that need data from outside the research (steps 8, 11 and 14 now; 1, 3 and 7 next) run in one step, `mycel signals`, between cluster and map. It writes `signals.json`; the map reads it when it is there and works without it.
+
+- **Step 14, trends.** Monthly searches per page cluster: first what the cache already holds (every Labs result carries 12 months and a yearly change, free), then Google Ads search volume for 24 months (one call per 1000 searches). Rising or falling = at least 30% more or less than the same three months a year earlier; seasonal = the best month reaches twice the median month, with the peak months and a month to publish by (two months before the peak). Google Trends explore for the central entity and the top offerings adds the long curve and rising searches: a rising search the research has is marked on its page, the rest are listed as trend ideas, never pages.
+- **Steps 8 and 11, competitors.** Their XML sitemaps (robots.txt, then the usual paths), free and cached: content pages (vastness), which of our page topics they have a page on (depth, by the words in their URLs), pages changed per month from last-modified dates (momentum; left out when one day holds most dates, because then the dates are generated), and gap topics: words two or more competitors use in three or more URLs that no kept search covers. Gaps are ideas for the next research round, not pages. A site that answers with a bot check is marked blocked; it is never worked around.
+- **In the map:** each page shows its trend and the competitors on it, and says both in plain words in its why. Both weigh lightly in the value (rising x1.15, falling x0.85, two or more competitors x1.1): the business still decides the order. The first plan goes wide before deep (step 11): in the new-page groups the offerings take turns, and a seasonal page whose publish-by month is near goes first. The map lists the market: competitors' size and pace, gaps, topic curves, trend ideas.
+- **Money:** sitemaps are free. Monthly searches and Google Trends cost a few cents per client and are bought only with `--buy`; without it the step uses the cache. `--dry-run` counts what `--buy` would buy.
+
+**Why one step and not part of research:** the research is the expensive step and is not rerun lightly; these signals are cheap, change monthly and can be refreshed on their own. One file keeps the map's input simple, and `mycel status` shows it as one step.
+
+**Not yet:** the page budget does not follow competitors' pace (it stays the owner's year of work); gap topics are not fed back into research seeds automatically; Trends ideas get no volume until the next research round.

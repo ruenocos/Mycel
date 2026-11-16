@@ -105,6 +105,9 @@ describe("mycel status", () => {
       ]);
 
       put("clusters.json");
+      expect(commands()).toEqual([`mycel signals ${at("clusters.json")} --dry-run`]);
+
+      put("signals.json");
       expect(commands()).toEqual([`mycel map ${at("clusters.json")}`]);
 
       put("topical-map.json");
@@ -143,6 +146,7 @@ describe("mycel status", () => {
       "business    missing  no business profile yet",
       "filter      missing  no queries.json yet",
       "cluster     missing  no clusters.json yet",
+      "signals     missing  no signals.json yet",
       "map         missing  no topical-map.json yet",
       `next        mycel context confirm ${join(folder, "context.json")}`,
     ]);

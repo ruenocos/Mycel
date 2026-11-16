@@ -7,6 +7,7 @@ import { listRuns } from "../log/timeline.ts";
 import type { RunMeta } from "../log/types.ts";
 import { MAP_STEP_VERSION } from "../map/step.ts";
 import { RESEARCH_VERSION } from "../research/collect.ts";
+import { SIGNALS_VERSION } from "../signals/step.ts";
 import { savedStepVersion } from "../step.ts";
 
 /**
@@ -24,6 +25,7 @@ export const PIPELINE_STEPS = [
   "business",
   "filter",
   "cluster",
+  "signals",
   "map",
 ] as const;
 export type PipelineStepId = (typeof PIPELINE_STEPS)[number];
@@ -77,11 +79,19 @@ const SPECS: StepSpec[] = [
     madeFrom: ["filter", "context"],
     run: { command: "cluster", step: "cluster", version: CLUSTER_VERSION },
   },
+  // Trends and competitors (issue #63): what the map reads besides the clusters.
+  {
+    id: "signals",
+    file: "signals.json",
+    needs: ["cluster"],
+    madeFrom: ["cluster", "context"],
+    run: { command: "signals", step: "signals", version: SIGNALS_VERSION },
+  },
   {
     id: "map",
     file: "topical-map.json",
-    needs: ["cluster", "business"],
-    madeFrom: ["cluster", "context", "business"],
+    needs: ["cluster", "business", "signals"],
+    madeFrom: ["cluster", "context", "business", "signals"],
     run: { command: "map", step: "map", version: MAP_STEP_VERSION },
   },
 ];

@@ -124,6 +124,11 @@ const PLAIN: Record<
     stage: Record<ReturnType<typeof stageOf>, string>;
     offering: (name: string) => string;
     hub: { offering: string; site: string; theme: string };
+    /** Map signals (issue #63): where its searches go, and who already has a page on it. */
+    rising: (pct: number) => string;
+    falling: (pct: number) => string;
+    seasonal: (peaks: string, by: string) => string;
+    covered: (n: number) => string;
   }
 > = {
   nl: {
@@ -142,6 +147,11 @@ const PLAIN: Record<
       site: "Een onderdeel dat je site al heeft; het blijft de plek voor pagina's die erbij horen.",
       theme: "Een overzichtspagina die pagina's over één thema bij elkaar zet.",
     },
+    rising: (pct) => `Er wordt ${pct}% meer op gezocht dan een jaar eerder.`,
+    falling: (pct) => `Er wordt ${pct}% minder op gezocht dan een jaar eerder.`,
+    seasonal: (peaks, by) =>
+      `Er wordt vooral in ${peaks} op gezocht: zet de pagina vóór ${by} online.`,
+    covered: (n) => `${n} concurrenten hebben er al een pagina over.`,
   },
   en: {
     demand: (q, v) => `"${q}" is searched about ${v.toLocaleString("en-GB")} times a month`,
@@ -158,6 +168,10 @@ const PLAIN: Record<
       site: "A section your site already has; it stays the home for related pages.",
       theme: "An overview page that brings pages on one theme together.",
     },
+    rising: (pct) => `Searches for it are up ${pct}% on a year earlier.`,
+    falling: (pct) => `Searches for it are down ${pct}% on a year earlier.`,
+    seasonal: (peaks, by) => `It is searched most in ${peaks}: put the page up before ${by}.`,
+    covered: (n) => `${n} competitors already have a page on it.`,
   },
 };
 
@@ -171,6 +185,52 @@ export function plainWhy(
   if (n.hub) return t.hub[n.hub];
   const head = n.volume > 0 ? t.demand(n.mainQuery, n.volume) : t.quiet(n.mainQuery);
   return `${head} ${t.stage[stageOf(n.intent.main)]}${offeringName ? t.offering(offeringName) : ""}`;
+}
+
+const monthName = (m: number, language: string) =>
+  new Intl.DateTimeFormat(language, { month: "long", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2024, m - 1, 1)),
+  );
+
+const listOf = (items: string[], language: string) =>
+  new Intl.ListFormat(language, { style: "long", type: "conjunction" }).format(items);
+
+/**
+ * One or two sentences from the map signals (issue #63), in the market language: where the
+ * page's searches are heading and how many competitors already have a page on it. Empty when
+ * there is nothing worth saying.
+ */
+export function signalWhy(
+  s: {
+    trend?: {
+      label: string;
+      change?: number | undefined;
+      peakMonths: number[];
+      publishBy?: number | undefined;
+    };
+    competitors?: string[];
+  },
+  language: string,
+): string {
+  const t = PLAIN[language] ?? (PLAIN.en as (typeof PLAIN)[string]);
+  const out: string[] = [];
+  const tr = s.trend;
+  const pct = tr?.change !== undefined ? Math.round(Math.abs(tr.change) * 100) : 0;
+  if (tr?.label === "rising" && pct) out.push(t.rising(pct));
+  else if (tr?.label === "falling" && pct) out.push(t.falling(pct));
+  if (tr?.publishBy && tr.peakMonths.length && tr.peakMonths.length <= 4) {
+    out.push(
+      t.seasonal(
+        listOf(
+          tr.peakMonths.map((m) => monthName(m, language)),
+          language,
+        ),
+        monthName(tr.publishBy, language),
+      ),
+    );
+  }
+  if ((s.competitors?.length ?? 0) >= 2) out.push(t.covered(s.competitors?.length ?? 0));
+  return out.join(" ");
 }
 
 /** A name from data only: the main search with a capital. */

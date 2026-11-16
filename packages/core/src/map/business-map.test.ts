@@ -373,4 +373,80 @@ describe("mapStep with a business profile", () => {
       expect.objectContaining({ url: "/verhuur/", job: "serves", nodeId: "o-fietsverhuur" }),
     ]);
   });
+
+  it("shows each page's trend and competitors, weighs them lightly and lists the market", async () => {
+    const run = RunStore.create({
+      runsDir: mkdtempSync(join(tmpdir(), "mycel-bmap-")),
+      client: "test",
+      command: "test",
+      cliVersion: "0.0.0",
+    });
+    const flat = Array.from({ length: 12 }, (_, i) => ({
+      month: `2026-${String(i + 1).padStart(2, "0")}`,
+      volume: 50,
+    }));
+    const maps = await runStep(run, mapStep(stub()), {
+      context: { ...context, business },
+      clusters,
+      pages,
+      model: "fake",
+      signals: {
+        site: context.site,
+        market: context.market,
+        createdAt: "2026-11-16T07:00:00.000Z",
+        trends: {
+          clusters: [
+            {
+              clusterId: "kosten",
+              mainQuery: "fietsreparatie kosten",
+              label: "rising",
+              change: 0.42,
+              monthly: flat,
+            },
+            {
+              clusterId: "band",
+              mainQuery: "band plakken",
+              label: "seasonal",
+              peakMonths: [4, 5],
+              publishBy: 2,
+              monthly: flat,
+            },
+          ],
+          topics: [{ keyword: "fiets", label: "steady", change: 0.02, peakMonths: [] }],
+          ideas: [{ query: "fiets laadpaal", growthPct: 300, under: "fiets" }],
+          coverage: { clusters: 10, withTrend: 2 },
+        },
+        competitors: {
+          sites: [
+            { domain: "rival.nl", status: "ok", pages: 120, sections: [], perMonth: 3, dated: 0.9 },
+          ],
+          coverage: [{ clusterId: "kosten", competitors: ["rival.nl", "ander.nl"], urls: [] }],
+          gaps: [
+            { topic: "fiets laadpaal", competitors: ["rival.nl", "ander.nl"], pages: 4, urls: [] },
+          ],
+        },
+      },
+    });
+    const map = maps.maps[0] as (typeof maps.maps)[number];
+    expect(TopicalMap.safeParse(map).success).toBe(true);
+    const cost = map.nodes.find((n) => n.mainQuery === "fietsreparatie kosten");
+    expect(cost).toMatchObject({
+      flags: { trending: true },
+      trend: { label: "rising", change: 0.42 },
+      competitors: ["rival.nl", "ander.nl"],
+    });
+    expect(cost?.why).toMatch(
+      /Er wordt 42% meer op gezocht dan een jaar eerder\. 2 concurrenten hebben er al een pagina over\.$/,
+    );
+    const band = map.nodes.find((n) => n.mainQuery === "band plakken");
+    if (band) {
+      expect(band.trend).toMatchObject({ label: "seasonal", publishBy: 2 });
+      expect(band.why).toContain("zet de pagina vóór februari online");
+    }
+    expect(maps.market).toMatchObject({
+      competitors: [{ domain: "rival.nl", pages: 120 }],
+      gaps: [{ topic: "fiets laadpaal" }],
+      trendIdeas: [{ query: "fiets laadpaal" }],
+    });
+  });
 });

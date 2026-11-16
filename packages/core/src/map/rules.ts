@@ -80,6 +80,13 @@ export const VALUE = {
   cpcDefault: 0.7,
   /** An existing page already seen in Google is a quick win; any existing page beats a new one. */
   opportunity: { seen: 1.3, existing: 1.15, new: 1 },
+  /**
+   * Map signals (issue #63): a topic that grows is worth a bit more, one that shrinks a bit less
+   * (step 14); a topic two or more competitors have a page on is proven to matter (step 11).
+   * Small on purpose: the business still decides the order.
+   */
+  trend: { rising: 1.15, falling: 0.85, seasonal: 1, steady: 1 },
+  covered: { min: 2, weight: 1.1 },
 } as const;
 
 /** Longest proposed slug; it is cut at a word, never inside one. */

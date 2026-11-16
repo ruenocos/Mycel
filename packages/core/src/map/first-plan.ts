@@ -10,7 +10,9 @@ import { byValue } from "./value.ts";
  * 3. missing pages for the top offerings;
  * 4. their support pages.
  *
- * Within each group the value score decides, volume breaks ties. Every step is tied to a top
+ * Within each group the value score decides, volume breaks ties. In groups 3 and 4 the plan goes
+ * wide before deep (Koray step 11, issue #63): the offerings take turns, each with its best page,
+ * and a seasonal page whose publish-by month is near goes first. Every step is tied to a top
  * offering or a conflict: work for other offerings waits ("later"), however big its search. A
  * new page brings its new hubs along, so nothing in the plan hangs under a page that doesn't
  * exist yet.
@@ -32,6 +34,10 @@ export interface PlanInput {
   money: boolean;
   /** It serves one of the top offerings (value.ts topOfferings). */
   top: boolean;
+  /** The offering it serves: groups 3 and 4 take turns over the offerings (breadth first). */
+  offeringId?: string;
+  /** A seasonal page whose publish-by month is close (signals, step 14). */
+  soon?: boolean;
 }
 
 export interface PlannedAction {
@@ -55,6 +61,34 @@ function groupOf(n: PlanInput): number | undefined {
   return undefined;
 }
 
+/**
+ * Groups 3 and 4 wide before deep: pages due before a seasonal peak first, then the offerings
+ * take turns (the offering with the best page starts), each turn its next page by value.
+ */
+export function breadthFirst<T extends { n: PlanInput; group: number }>(sorted: T[]): T[] {
+  const out: T[] = [];
+  for (const g of [...new Set(sorted.map((x) => x.group))]) {
+    const inGroup = sorted.filter((x) => x.group === g);
+    if (g < 3) {
+      out.push(...inGroup);
+      continue;
+    }
+    out.push(...inGroup.filter((x) => x.n.soon));
+    const queues = new Map<string, T[]>();
+    for (const x of inGroup.filter((y) => !y.n.soon)) {
+      const k = x.n.offeringId ?? "";
+      queues.set(k, [...(queues.get(k) ?? []), x]);
+    }
+    while ([...queues.values()].some((q) => q.length)) {
+      for (const q of queues.values()) {
+        const next = q.shift();
+        if (next) out.push(next);
+      }
+    }
+  }
+  return out;
+}
+
 export function planFirst(
   nodes: PlanInput[],
   plan: { size: number; max: number } = PLAN,
@@ -69,6 +103,7 @@ export function planFirst(
     .map((n) => ({ n, group: groupOf(n) }))
     .filter((x): x is { n: PlanInput; group: number } => x.group !== undefined)
     .sort((a, b) => a.group - b.group || byValue(a.n, b.n));
+  const ordered = breadthFirst(candidates);
 
   const now: PlanInput[] = [];
   const inNow = new Set<string>();
@@ -76,7 +111,7 @@ export function planFirst(
     now.push(n);
     inNow.add(n.id);
   };
-  for (const { n, group } of candidates) {
+  for (const { n, group } of ordered) {
     if (inNow.has(n.id)) continue;
     if (group === 1) {
       if (now.length < plan.max) add(n);

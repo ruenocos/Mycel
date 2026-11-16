@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CentralEntity } from "./context.ts";
+import { CompetitorSite, GapTopic, TopicTrend, TrendIdea, TrendLabel } from "./signals.ts";
 import { SectionRole, SiteSection } from "./site.ts";
 
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
@@ -108,7 +109,23 @@ export const MapNode = z.object({
    * opportunity (value.ts). Orders the plan; volume only breaks ties.
    */
   value: z.number().nonnegative().optional(),
+  /** trending: its searches rise against a year earlier or in Google Trends (step 14). */
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
+  /**
+   * Where its searches are heading (issue #63, step 14): rising, falling, seasonal or steady,
+   * the change against a year earlier, its peak months and, for a seasonal page, the month to
+   * publish by.
+   */
+  trend: z
+    .object({
+      label: TrendLabel,
+      change: z.number().optional(),
+      peakMonths: z.array(z.number().int().min(1).max(12)).default([]),
+      publishBy: z.number().int().min(1).max(12).optional(),
+    })
+    .optional(),
+  /** Competitors with a page on this topic, from their sitemaps (issue #63, step 11). */
+  competitors: z.array(z.string().min(1)).optional(),
   /**
    * The site section the page lives in (issue #51): its page type, template and URL folder.
    * `suggested` marks a section the site doesn't have yet.
@@ -244,6 +261,19 @@ export const SiteMaps = z.object({
         reason: z.string().min(1).optional(),
       }),
     )
+    .optional(),
+  /**
+   * The market around the map (issue #63): competitors' size and pace (steps 8 and 11), topics
+   * they cover that the research has no search for, the long curve of the central topics and
+   * rising searches without a page (step 14).
+   */
+  market: z
+    .object({
+      competitors: z.array(CompetitorSite).default([]),
+      gaps: z.array(GapTopic).default([]),
+      topics: z.array(TopicTrend).default([]),
+      trendIdeas: z.array(TrendIdea).default([]),
+    })
     .optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z

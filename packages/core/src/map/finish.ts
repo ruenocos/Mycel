@@ -1,15 +1,17 @@
 import type {
   ClientContext,
+  ClusterTrend,
   LeftOut,
   MapNode,
   MapSection,
   MenuGroup,
+  SignalSet,
   SiteMaps,
   SiteSection,
   TopicalMap,
 } from "@mycel/schema";
 import { applyBudget } from "./budget.ts";
-import { checkText, claimFacts, plainName, plainWhy } from "./check.ts";
+import { checkText, claimFacts, plainName, plainWhy, signalWhy } from "./check.ts";
 import { wordRivals } from "./conflict.ts";
 import { planFirst } from "./first-plan.ts";
 import { type InventoryEntry, pageInventory } from "./inventory.ts";
@@ -119,6 +121,8 @@ export interface FinishInput {
   /** The site's sections and menu groups as the reader found them (issue #51). */
   sections?: SiteSection[];
   menu?: MenuGroup[];
+  /** Map signals (issue #63): trends per cluster, competitor coverage, the market around. */
+  signals?: SignalSet;
   runId: string;
   createdAt: string;
   costUsd: number;
@@ -176,7 +180,47 @@ export function finishMaps(input: FinishInput): SiteMaps {
       : []),
     ...[...suggested.values()].map((s) => ({ ...s, suggested: true })),
   ];
-  return { site: ctx.site.url, maps, siteSections: siteSectionList, inventory, outside };
+  const sig = input.signals;
+  const market =
+    sig && (sig.trends || sig.competitors)
+      ? {
+          market: {
+            competitors: sig.competitors?.sites ?? [],
+            gaps: sig.competitors?.gaps ?? [],
+            topics: sig.trends?.topics ?? [],
+            trendIdeas: sig.trends?.ideas ?? [],
+          },
+        }
+      : {};
+  return {
+    site: ctx.site.url,
+    maps,
+    siteSections: siteSectionList,
+    inventory,
+    ...market,
+    outside,
+  };
+}
+
+/** What the signals add to a page's value input. */
+function signalValue(
+  t: ClusterTrend | undefined,
+  rivals: string[] | undefined,
+): { trend?: ClusterTrend["label"]; competitors?: number } {
+  return { ...(t ? { trend: t.label } : {}), ...(rivals ? { competitors: rivals.length } : {}) };
+}
+
+/** The node's trend as the map shows it. */
+function trendField(t: ClusterTrend | undefined): Pick<MapNode, "trend"> {
+  if (!t) return {};
+  return {
+    trend: {
+      label: t.label,
+      ...(t.change !== undefined ? { change: t.change } : {}),
+      peakMonths: t.peakMonths,
+      ...(t.publishBy ? { publishBy: t.publishBy } : {}),
+    },
+  };
 }
 
 function finishOne(
@@ -358,7 +402,22 @@ function finishOne(
     return undefined;
   };
 
-  // Value (step 6): offering tier x buying stage x click price x opportunity.
+  // Map signals (issue #63): a page's trend (step 14) and the competitors on it (step 11).
+  const trendByCluster = new Map(
+    (input.signals?.trends?.clusters ?? []).map((t) => [t.clusterId, t]),
+  );
+  const coverByCluster = new Map(
+    (input.signals?.competitors?.coverage ?? []).map((c) => [c.clusterId, c.competitors]),
+  );
+  const trendOf = (n: NodeDraft) => (n.clusterId ? trendByCluster.get(n.clusterId) : undefined);
+  const rivalsOf = (n: NodeDraft) => (n.clusterId ? coverByCluster.get(n.clusterId) : undefined);
+  const nowMonth = new Date(input.createdAt).getUTCMonth() + 1;
+  const soon = (n: NodeDraft) => {
+    const by = trendOf(n)?.publishBy;
+    return by !== undefined && (by - nowMonth + 12) % 12 <= 3;
+  };
+
+  // Value (step 6): offering tier x buying stage x click price x opportunity (x signals).
   const business = ctx.business;
   const valueById = new Map<string, number>();
   const tierById = new Map<string, Tier>();
@@ -373,6 +432,7 @@ function finishOne(
         ...(n.cpc !== undefined ? { cpc: n.cpc } : {}),
         existing: linked.has(n.id),
         seen: n.gscImpressions > 0,
+        ...signalValue(trendOf(n), rivalsOf(n)),
       }),
     );
   }
@@ -469,6 +529,8 @@ function finishOne(
         money: n.section === "core" || stageOf(n.intent.main) !== "learn",
         // Without a profile every core page serves a top offering (the old tiers).
         top: business ? !!off && topIds.has(off) : n.section === "core",
+        ...(off ? { offeringId: off } : {}),
+        ...(soon(n) ? { soon: true } : {}),
       };
     }),
   );
@@ -499,6 +561,18 @@ function finishOne(
     if (n.hub === "theme" && n.qdpWhy.length >= 10 && checkText(n.qdpWhy, facts).length === 0)
       return n.qdpWhy;
     return plainWhy(n, ctx.market.language, offeringName(offeringOf(n)));
+  };
+
+  // The why, with what the signals add in plain words (issue #63).
+  const withSignals = (why: string, n: NodeDraft) => {
+    if (n.isRoot || n.hub === "theme" || n.hub === "site") return why;
+    const t = trendOf(n);
+    const rivals = rivalsOf(n);
+    const extra = signalWhy(
+      { ...(t ? { trend: t } : {}), ...(rivals ? { competitors: rivals } : {}) },
+      ctx.market.language,
+    );
+    return extra ? `${why.replace(/\s*$/, "")} ${extra}` : why;
   };
 
   // Site sections (issue #51): every page gets one; a new page's URL uses its folder.
@@ -616,12 +690,14 @@ function finishOne(
       ...(act.wave ? { wave: act.wave } : {}),
       ...(act.step ? { planStep: act.step } : {}),
       ...(n.isRoot ? {} : { value: valueOfNode(n) }),
-      flags: { quality: quality.has(n.id), trending: false },
+      flags: { quality: quality.has(n.id), trending: trendOf(n)?.label === "rising" },
+      ...trendField(trendOf(n)),
+      ...(rivalsOf(n)?.length ? { competitors: rivalsOf(n) } : {}),
       ...siteSectionOf(n.id),
       linksOut: linksOf(n),
       aiOverview: n.aiOverview,
       status: statusOf(n),
-      why: whyOf(n),
+      why: withSignals(whyOf(n), n),
     };
   });
   // Every existing page's job (step 5).

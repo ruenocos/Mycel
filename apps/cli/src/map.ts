@@ -24,6 +24,7 @@ import {
   FilteredQueries,
   GateExpectations,
   MenuGroup,
+  SignalSet,
   type SiteMaps,
   SiteSection,
 } from "@mycel/schema";
@@ -79,6 +80,7 @@ function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
 
 const CLUSTERS_FILE = { name: "clusters file", writtenBy: "mycel cluster" };
 const PAGES_SOURCE = { name: "pages or research file", writtenBy: "mycel research" };
+const SIGNALS_FILE = { name: "signals file", writtenBy: "mycel signals" };
 const EXPECTATIONS = { name: "expectations file", writtenBy: "hand, in a fixture folder" };
 
 interface SiteRead {
@@ -173,6 +175,8 @@ export interface MapOptions {
   pagesFile?: string;
   /** The confirmed business profile. Default: business.json next to the context, when it exists. */
   businessFile?: string;
+  /** signals.json from `mycel signals`. Default: next to the clusters file, when it exists. */
+  signalsFile?: string;
   /** DataforSEO cache folder for the one-page-per-intent check (cache only, no paid calls). */
   cacheDir?: string;
   /** A test client's expectations.json: run the gate check on the map. */
@@ -215,6 +219,10 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
   // A site URL is read live over the public WordPress API (free, cached) inside the run.
   const siteRead: SiteRead =
     pagesFile && !isUrl(pagesFile) ? readPages(pagesFile) : { pages: [], sections: [], menu: [] };
+  const signalsFile =
+    opts.signalsFile ??
+    (existsSync(join(dir, "signals.json")) ? join(dir, "signals.json") : undefined);
+  const signals = signalsFile ? readInput(signalsFile, SignalSet, SIGNALS_FILE) : undefined;
   const expectations = opts.expectFile
     ? readInput(opts.expectFile, GateExpectations, EXPECTATIONS)
     : undefined;
@@ -230,6 +238,7 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
       context: contextFile,
       pages: pagesFile ?? null,
       expect: opts.expectFile ?? null,
+      signals: signalsFile ?? null,
       business: business ? (businessFile ?? "in context") : null,
       model: opts.model,
     },
@@ -239,6 +248,7 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
   if (!context.confirmed) lines.push("note        context is not confirmed: trial run");
   if (!queriesFile) lines.push("note        no queries.json: intent falls back to the tier");
   if (!pagesFile) lines.push("note        no pages: existing pages are not linked");
+  if (!signalsFile) lines.push("note        no signals.json: no trends or competitor data");
   if (!business) lines.push("note        no business.json: map without the business profile");
   else if (!business.confirmed) lines.push("note        business profile is not confirmed");
   let out: string | undefined;
@@ -274,6 +284,7 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
       pages: site.pages,
       sections: site.sections,
       menu: site.menu,
+      ...(signals ? { signals } : {}),
       model: opts.model,
     });
     out = opts.out ?? join(dir, "topical-map.json");
