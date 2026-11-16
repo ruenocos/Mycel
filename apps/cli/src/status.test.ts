@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { businessApply, businessPropose, businessSimulate } from "./business.ts";
+import { shellArg } from "./input.ts";
 import { runCli } from "./program.ts";
 import { statusRun } from "./status.ts";
 
@@ -148,7 +149,8 @@ describe("mycel status", () => {
       "cluster     missing  no clusters.json yet",
       "signals     missing  no signals.json yet",
       "map         missing  no topical-map.json yet",
-      `next        mycel context confirm ${join(folder, "context.json")}`,
+      // Quoted when the checkout's path has spaces, as on a Windows PC.
+      `next        mycel context confirm ${shellArg(join(folder, "context.json"))}`,
     ]);
 
     await runCli(["node", "mycel", "status", join(folder, "nope")], (s) => out.push(s), io);

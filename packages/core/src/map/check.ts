@@ -116,6 +116,18 @@ export function checkText(text: string, f: ClaimFacts): string[] {
 }
 
 /** Plain sentences built from data, in the market language, when the model's text fails. */
+/**
+ * A big rise as a multiple ("ruim 3 keer"), not a percentage: plainer, and "100%" reads as an
+ * unproven promise to the claim check.
+ */
+function times(pct: number, language: string): string {
+  const x = 1 + pct / 100;
+  const whole = Math.floor(x);
+  const n = whole === 2 && language === "nl" ? "twee" : String(whole);
+  if (language === "nl") return x - whole >= 0.1 ? `ruim ${n} keer` : `${n} keer`;
+  return x - whole >= 0.1 ? `over ${whole} times` : `${whole} times`;
+}
+
 const PLAIN: Record<
   string,
   {
@@ -147,7 +159,10 @@ const PLAIN: Record<
       site: "Een onderdeel dat je site al heeft; het blijft de plek voor pagina's die erbij horen.",
       theme: "Een overzichtspagina die pagina's over één thema bij elkaar zet.",
     },
-    rising: (pct) => `Er wordt ${pct}% meer op gezocht dan een jaar eerder.`,
+    rising: (pct) =>
+      pct >= 100
+        ? `Er wordt ${times(pct, "nl")} zo vaak op gezocht als een jaar eerder.`
+        : `Er wordt ${pct}% meer op gezocht dan een jaar eerder.`,
     falling: (pct) => `Er wordt ${pct}% minder op gezocht dan een jaar eerder.`,
     seasonal: (peaks, by) =>
       `Er wordt vooral in ${peaks} op gezocht: zet de pagina vóór ${by} online.`,
@@ -168,7 +183,10 @@ const PLAIN: Record<
       site: "A section your site already has; it stays the home for related pages.",
       theme: "An overview page that brings pages on one theme together.",
     },
-    rising: (pct) => `Searches for it are up ${pct}% on a year earlier.`,
+    rising: (pct) =>
+      pct >= 100
+        ? `It is searched ${times(pct, "en")} as often as a year earlier.`
+        : `Searches for it are up ${pct}% on a year earlier.`,
     falling: (pct) => `Searches for it are down ${pct}% on a year earlier.`,
     seasonal: (peaks, by) => `It is searched most in ${peaks}: put the page up before ${by}.`,
     covered: (n) => `${n} competitors already have a page on it.`,

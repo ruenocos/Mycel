@@ -1,6 +1,6 @@
 import { BusinessProfile } from "@mycel/schema";
 import { describe, expect, it } from "vitest";
-import { type ClaimFacts, checkText, plainName, plainWhy } from "./check.ts";
+import { type ClaimFacts, checkText, plainName, plainWhy, signalWhy } from "./check.ts";
 
 const business = BusinessProfile.parse({
   offerings: [
@@ -73,5 +73,18 @@ describe("plain fallbacks", () => {
     );
     expect(plainWhy({ ...n, hub: "offering" as const }, "en")).toContain("offerings");
     expect(plainName("daklekkage repareren")).toBe("Daklekkage repareren");
+  });
+});
+
+describe("signal sentences", () => {
+  it("says a big rise as a multiple, which passes the claim check", () => {
+    const rise = (change: number) =>
+      signalWhy({ trend: { label: "rising", change, peakMonths: [] } }, "nl");
+    expect(rise(0.42)).toBe("Er wordt 42% meer op gezocht dan een jaar eerder.");
+    expect(rise(1)).toBe("Er wordt twee keer zo vaak op gezocht als een jaar eerder.");
+    expect(rise(13)).toBe("Er wordt 14 keer zo vaak op gezocht als een jaar eerder.");
+    expect(rise(2.3)).toBe("Er wordt ruim 3 keer zo vaak op gezocht als een jaar eerder.");
+    const facts: ClaimFacts = { language: "nl", country: "NL", siteName: "X", searches: [] };
+    expect(checkText(rise(1), facts)).toEqual([]);
   });
 });

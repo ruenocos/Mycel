@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { nullRecorder } from "../recorder.ts";
-import { parseEntities, WikidataClient, WikidataError } from "./client.ts";
+import { backoffMs, parseEntities, WikidataClient, WikidataError } from "./client.ts";
 
 /** Made-up items in Wikidata's shape. */
 const ENTITY = {
@@ -83,5 +83,30 @@ describe("wikidata (steps 3 and 7)", () => {
     });
     await expect(client.search("x", "nl", nullRecorder)).rejects.toThrow(WikidataError);
     await expect(client.search("x", "nl", nullRecorder)).rejects.toThrow(/maxlag/);
+  });
+
+  it("waits and tries again when Wikidata says slow down, and gives up after a few tries", async () => {
+    const waits: number[] = [];
+    let n = 0;
+    const client = new WikidataClient({
+      fetchImpl: async () =>
+        ++n < 3
+          ? new Response("slow down", { status: 429, headers: { "retry-after": "2" } })
+          : new Response(JSON.stringify(SEARCH)),
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    expect(await client.search("kamerplant", "nl", nullRecorder)).toHaveLength(2);
+    expect(waits).toEqual([2000, 2000]);
+    const stuck = new WikidataClient({
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: { code: "maxlag", info: "lag" } })),
+      sleep: async () => {},
+      attempts: 2,
+    });
+    await expect(stuck.search("x", "nl", nullRecorder)).rejects.toThrow(/maxlag after 2 tries/);
+    expect(backoffMs(null, 0)).toBe(5000);
+    expect(backoffMs(null, 5)).toBe(60_000);
   });
 });
