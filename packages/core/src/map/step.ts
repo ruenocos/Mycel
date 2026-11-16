@@ -3,6 +3,7 @@ import {
   ClusterSet,
   FilteredQuery,
   MenuGroup,
+  SignalSet,
   SiteMaps,
   SitePage,
   SiteSection,
@@ -83,8 +84,13 @@ import { anchorSiteHubs } from "./site.ts";
  *    work (the rest to the backlog), a first plan of about 10 steps tied to the top offerings
  *    or a conflict, a fact check on names and why-texts (map-fix v1) with plain market-language
  *    sentences as the fallback, and slugs from the page name.
+ * 12: map signals (issue #63): with signals.json each page gets its trend (rising, falling,
+ *    seasonal with a publish-by month; flags.trending for rising) and the competitors with a page
+ *    on it; both weigh lightly in the value; the first plan goes wide before deep (offerings take
+ *    turns, pages due before their season first); the why says it in plain words; the map lists
+ *    the market (competitors' size and pace, gap topics, topic curves, trend ideas).
  */
-export const MAP_STEP_VERSION = "11";
+export const MAP_STEP_VERSION = "12";
 
 export const MapInput = z.object({
   context: ClientContext,
@@ -113,6 +119,8 @@ export const MapInput = z.object({
   concurrency: z.number().int().positive().default(3),
   /** Merge pages whose cached SERPs overlap (needs a SERP port). */
   intentSerps: z.boolean().default(true),
+  /** Map signals (issue #63): trends, competitor coverage and the market around the map. */
+  signals: SignalSet.optional(),
 });
 export type MapInput = z.input<typeof MapInput>;
 
@@ -255,6 +263,7 @@ export function mapStep(llm: JsonModel, serpPort?: SerpBatchPort) {
         pageAlso: linked.also,
         sections: input.sections,
         menu: input.menu,
+        ...(input.signals ? { signals: input.signals } : {}),
         runId: ctx.runId,
         createdAt: new Date().toISOString(),
         costUsd: 0,

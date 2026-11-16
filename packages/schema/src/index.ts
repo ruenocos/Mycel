@@ -8,6 +8,7 @@ export * from "./map.ts";
 export * from "./map-eval.ts";
 export * from "./query.ts";
 export * from "./research.ts";
+export * from "./signals.ts";
 export * from "./site.ts";
 export * from "./writing-test.ts";
 

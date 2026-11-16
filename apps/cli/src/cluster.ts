@@ -156,7 +156,9 @@ export async function clusterRun(opts: ClusterOptionsCli): Promise<ClusterResult
     runId: run.runId,
     ok: meta.status === "ok",
     lines,
-    ...(out ? { out, outputs: { clusters: out }, next: [{ command: command("map", out) }] } : {}),
+    ...(out
+      ? { out, outputs: { clusters: out }, next: [{ command: command("signals", out) }] }
+      : {}),
     ...(failure !== undefined ? { failure } : {}),
   };
 }

@@ -79,4 +79,23 @@ describe("planFirst", () => {
     ]);
     expect(out.get("child")?.wave).toBe("later");
   });
+
+  it("goes wide before deep: offerings take turns, a page due before its season goes first", () => {
+    const out = planFirst(
+      [
+        root,
+        page("a1", { offeringId: "a", value: 0.9 }),
+        page("a2", { offeringId: "a", value: 0.8 }),
+        page("a3", { offeringId: "a", value: 0.7 }),
+        page("b1", { offeringId: "b", value: 0.5 }),
+        page("c1", { offeringId: "c", value: 0.4 }),
+        page("season", { offeringId: "c", value: 0.1, soon: true }),
+      ],
+      { size: 5, max: 5 },
+    );
+    const now = [...out]
+      .filter(([, a]) => a.wave === "now")
+      .sort(([, a], [, b]) => (a.step ?? 0) - (b.step ?? 0));
+    expect(now.map(([id]) => id)).toEqual(["season", "a1", "b1", "c1", "a2"]);
+  });
 });

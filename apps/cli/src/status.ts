@@ -56,6 +56,11 @@ function nextStep(status: PipelineStatus, a: PipelineAction): NextStep {
         command: command("cluster", file("filter"), "--dry-run"),
         note: "then the same with --live-serp --budget <usd> for what is missing. Buying is a person's call",
       };
+    case "signals":
+      return {
+        command: command("signals", file("cluster"), "--dry-run"),
+        note: "then the same without --dry-run ($0, cached data), or with --buy for monthly searches and Google Trends. Buying is a person's call",
+      };
     case "map":
       return { command: command("map", file("cluster")) };
   }

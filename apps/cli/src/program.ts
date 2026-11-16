@@ -21,6 +21,7 @@ import { llmPing } from "./llm-ping.ts";
 import { mapRun } from "./map.ts";
 import { research } from "./research.ts";
 import { type CommandIo, type CommandResult, jsonOutput, runCommand } from "./run-command.ts";
+import { signalsRun } from "./signals.ts";
 import { statusRun } from "./status.ts";
 import { cliVersion, versionLine } from "./version.ts";
 
@@ -71,6 +72,7 @@ A typical run, in order (every command prints the next one with its paths filled
   mycel research clients/example.com/context.json
   mycel filter clients/example.com/research.json
   mycel cluster clients/example.com/queries.json --live-serp --budget 3
+  mycel signals clients/example.com/clusters.json --buy --budget 0.5
   mycel map clients/example.com/clusters.json
   mycel logs latest
 
@@ -553,6 +555,79 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
     );
 
   program
+    .command("signals")
+    .description(
+      "Steps 1, 3, 7, 8, 11 and 14: trends, competitors' size and pace, entity check, glossary and personas, for the map",
+    )
+    .argument("<clusters>", "clusters.json written by mycel cluster")
+    .option("--queries <file>", "queries.json (default: next to clusters)")
+    .option("--context <file>", "the confirmed context (default: context.json next to clusters)")
+    .option(
+      "--research <file>",
+      "research.json for competitor candidates (default: next to clusters)",
+    )
+    .option("--out <file>", "where to write the signals (default: signals.json next to clusters)")
+    .option("--buy", "buy monthly searches and Google Trends that aren't cached (a few cents)")
+    .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
+    .option("--no-sitemaps", "don't read competitors' sitemaps")
+    .option("--no-wikidata", "don't check the central entity and the glossary against Wikidata")
+    .addOption(provider())
+    .option("--model <model>", "model that picks which Wikidata item a term means", DEFAULT_MODEL)
+    .option(...DRY_RUN)
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      `${examples(
+        "mycel signals clients/example.com/clusters.json --dry-run",
+        "mycel signals clients/example.com/clusters.json",
+        "mycel signals clients/example.com/clusters.json --buy --budget 0.5",
+      )}
+Without --buy nothing is bought: trends come from what the cache already holds. Sitemaps
+are free; a site that blocks the request is listed as blocked, never worked around.
+`,
+    )
+    .action(
+      (
+        clustersFile: string,
+        opts: {
+          queries?: string;
+          context?: string;
+          research?: string;
+          out?: string;
+          buy?: boolean;
+          budget: string;
+          sitemaps: boolean;
+          wikidata: boolean;
+          provider: string;
+          model: string;
+          dryRun?: boolean;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) =>
+        run(opts, () =>
+          signalsRun({
+            runsDir: runsDir(),
+            clustersFile,
+            budgetUsd: Number(opts.budget),
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            ...(opts.queries ? { queriesFile: opts.queries } : {}),
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.research ? { researchFile: opts.research } : {}),
+            ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.buy ? { buy: true } : {}),
+            ...(opts.sitemaps === false ? { noSitemaps: true } : {}),
+            ...(opts.wikidata === false ? { noWikidata: true } : {}),
+            provider: opts.provider,
+            model: opts.model,
+            ...(opts.dryRun ? { dryRun: true } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          }),
+        ),
+    );
+
+  program
     .command("map")
     .description(
       "Steps 11-14 and 20: build the topical map (core/outer tree, intent, priority, existing pages, links)",
@@ -564,6 +639,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
       "--pages <file|url>",
       "existing pages: pages.json, research.json or the site's URL (WordPress, read live and free; default: research.json next to clusters)",
     )
+    .option("--signals <file>", "signals.json from mycel signals (default: next to clusters)")
     .option("--expect <file>", "a test client's expectations.json: check the map against it")
     .option("--out <file>", "where to write the map (default: topical-map.json next to clusters)")
     .addOption(provider())
@@ -584,6 +660,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
           queries?: string;
           context?: string;
           pages?: string;
+          signals?: string;
           expect?: string;
           out?: string;
           provider: string;
@@ -602,6 +679,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
             ...(opts.queries ? { queriesFile: opts.queries } : {}),
             ...(opts.context ? { contextFile: opts.context } : {}),
             ...(opts.pages ? { pagesFile: opts.pages } : {}),
+            ...(opts.signals ? { signalsFile: opts.signals } : {}),
             ...(opts.expect ? { expectFile: opts.expect } : {}),
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.debug ? { debug: true } : {}),

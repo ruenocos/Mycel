@@ -8,6 +8,7 @@ export {
   LiveCallBlockedError,
   type SerpBatchResult,
 } from "./dataforseo/client.ts";
+export * from "./dataforseo/history.ts";
 export {
   type DfsLocation,
   findCity,
@@ -51,6 +52,22 @@ export {
   type LlmRecorder,
   nullRecorder,
 } from "./recorder.ts";
+export {
+  parseSitemap,
+  robotsSitemaps,
+  type SitemapOptions,
+  SitemapReader,
+  type SitemapUrl,
+  type SiteSitemap,
+} from "./sitemap/client.ts";
+export {
+  parseEntities,
+  WikidataClient,
+  type WikidataEntity,
+  WikidataError,
+  type WikidataHit,
+  type WikidataOptions,
+} from "./wikidata/client.ts";
 export {
   commonFolder,
   decodeEntities,

@@ -1,10 +1,11 @@
-import type { BusinessProfile, PageIntent } from "@mycel/schema";
+import type { BusinessProfile, PageIntent, TrendLabel } from "@mycel/schema";
 import { VALUE } from "./rules.ts";
 
 /**
  * What a page is worth to the business (issue #42, step 6): offering tier x buying stage x click
- * price x opportunity. Volume is left out on purpose: it only breaks ties between equal values,
- * so a big informational search never outranks a page that sells a top offering.
+ * price x opportunity, and with map signals (issue #63) a light weight for the trend and for
+ * competitors' coverage. Volume is left out on purpose: it only breaks ties between equal
+ * values, so a big informational search never outranks a page that sells a top offering.
  */
 
 export type Tier = keyof typeof VALUE.tier;
@@ -26,6 +27,10 @@ export interface ValueInput {
   existing: boolean;
   /** Its searches already show the site in Google (GSC impressions). */
   seen: boolean;
+  /** Where its searches are heading (signals, step 14). */
+  trend?: TrendLabel;
+  /** Competitors with a page on it (signals, step 11). */
+  competitors?: number;
 }
 
 export function pageValue(v: ValueInput): number {
@@ -39,7 +44,9 @@ export function pageValue(v: ValueInput): number {
     VALUE.tier[v.tier] *
     VALUE.stage[stageOf(v.intent)] *
     (cpc?.weight ?? VALUE.cpcDefault) *
-    opportunity;
+    opportunity *
+    (v.trend ? VALUE.trend[v.trend] : 1) *
+    ((v.competitors ?? 0) >= VALUE.covered.min ? VALUE.covered.weight : 1);
   return Math.round(raw * 1000) / 1000;
 }
 

@@ -373,4 +373,122 @@ describe("mapStep with a business profile", () => {
       expect.objectContaining({ url: "/verhuur/", job: "serves", nodeId: "o-fietsverhuur" }),
     ]);
   });
+
+  it("shows each page's trend and competitors, weighs them lightly and lists the market", async () => {
+    const run = RunStore.create({
+      runsDir: mkdtempSync(join(tmpdir(), "mycel-bmap-")),
+      client: "test",
+      command: "test",
+      cliVersion: "0.0.0",
+    });
+    const flat = Array.from({ length: 12 }, (_, i) => ({
+      month: `2026-${String(i + 1).padStart(2, "0")}`,
+      volume: 50,
+    }));
+    const maps = await runStep(run, mapStep(stub()), {
+      context: { ...context, business },
+      clusters,
+      pages,
+      model: "fake",
+      signals: {
+        site: context.site,
+        market: context.market,
+        createdAt: "2026-11-16T07:00:00.000Z",
+        trends: {
+          clusters: [
+            {
+              clusterId: "kosten",
+              mainQuery: "fietsreparatie kosten",
+              label: "rising",
+              change: 0.42,
+              monthly: flat,
+            },
+            {
+              clusterId: "band",
+              mainQuery: "band plakken",
+              label: "seasonal",
+              peakMonths: [4, 5],
+              publishBy: 2,
+              monthly: flat,
+            },
+          ],
+          topics: [{ keyword: "fiets", label: "steady", change: 0.02, peakMonths: [] }],
+          ideas: [{ query: "fiets laadpaal", growthPct: 300, under: "fiets" }],
+          coverage: { clusters: 10, withTrend: 2 },
+        },
+        competitors: {
+          sites: [
+            { domain: "rival.nl", status: "ok", pages: 120, sections: [], perMonth: 3, dated: 0.9 },
+          ],
+          coverage: [{ clusterId: "kosten", competitors: ["rival.nl", "ander.nl"], urls: [] }],
+          gaps: [
+            { topic: "fiets laadpaal", competitors: ["rival.nl", "ander.nl"], pages: 4, urls: [] },
+          ],
+        },
+        entities: [
+          {
+            name: "fiets",
+            recognized: true,
+            wikidata: { id: "Q11442", label: "fiets" },
+            aliases: ["rijwiel"],
+            broader: ["voertuig"],
+            note: "A known thing.",
+          },
+        ],
+        glossary: [
+          {
+            term: "fietsreparatie",
+            queries: 3,
+            volume: 3500,
+            synonyms: ["fietsherstel"],
+            searchedAs: [],
+            broader: [],
+            parts: [],
+            partOf: [],
+            related: [],
+          },
+        ],
+        personas: [
+          {
+            id: "forens",
+            name: "Forens",
+            who: "Fietst elke dag naar het werk en wil snel weer rijden.",
+            stage: "buy",
+            needs: [],
+            evidence: ["fietsreparatie kosten", "fiets reparatie snel", "fiets laten maken"],
+            volume: 3000,
+            offerings: [],
+            clusters: ["kosten"],
+            source: "model",
+          },
+        ],
+      },
+    });
+    const map = maps.maps[0] as (typeof maps.maps)[number];
+    expect(TopicalMap.safeParse(map).success).toBe(true);
+    const cost = map.nodes.find((n) => n.mainQuery === "fietsreparatie kosten");
+    expect(cost).toMatchObject({
+      flags: { trending: true },
+      trend: { label: "rising", change: 0.42 },
+      competitors: ["rival.nl", "ander.nl"],
+    });
+    expect(cost?.why).toMatch(
+      /Er wordt 42% meer op gezocht dan een jaar eerder\. 2 concurrenten hebben er al een pagina over\.$/,
+    );
+    const band = map.nodes.find((n) => n.mainQuery === "band plakken");
+    if (band) {
+      expect(band.trend).toMatchObject({ label: "seasonal", publishBy: 2 });
+      expect(band.why).toContain("zet de pagina vóór februari online");
+    }
+    expect(cost?.terms).toEqual(["fietsreparatie", "fietsherstel"]);
+    expect(map.header.entityCheck).toMatchObject({ recognized: true, wikidata: { id: "Q11442" } });
+    expect(maps.glossary?.[0]?.term).toBe("fietsreparatie");
+    expect(cost?.persona).toBe("forens");
+    expect(maps.personas?.[0]?.name).toBe("Forens");
+    expect(maps.market).toMatchObject({
+      competitors: [{ domain: "rival.nl", pages: 120 }],
+      gaps: [{ topic: "fiets laadpaal" }],
+      trendIdeas: [{ query: "fiets laadpaal" }],
+    });
+  });
 });

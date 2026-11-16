@@ -1,5 +1,15 @@
 import { z } from "zod";
 import { CentralEntity } from "./context.ts";
+import {
+  CompetitorSite,
+  EntityCheck,
+  GapTopic,
+  GlossaryEntry,
+  Persona,
+  TopicTrend,
+  TrendIdea,
+  TrendLabel,
+} from "./signals.ts";
 import { SectionRole, SiteSection } from "./site.ts";
 
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
@@ -108,7 +118,30 @@ export const MapNode = z.object({
    * opportunity (value.ts). Orders the plan; volume only breaks ties.
    */
   value: z.number().nonnegative().optional(),
+  /** trending: its searches rise against a year earlier or in Google Trends (step 14). */
   flags: z.object({ quality: z.boolean(), trending: z.boolean() }),
+  /**
+   * Where its searches are heading (issue #63, step 14): rising, falling, seasonal or steady,
+   * the change against a year earlier, its peak months and, for a seasonal page, the month to
+   * publish by.
+   */
+  trend: z
+    .object({
+      label: TrendLabel,
+      change: z.number().optional(),
+      peakMonths: z.array(z.number().int().min(1).max(12)).default([]),
+      publishBy: z.number().int().min(1).max(12).optional(),
+    })
+    .optional(),
+  /** Competitors with a page on this topic, from their sitemaps (issue #63, step 11). */
+  competitors: z.array(z.string().min(1)).optional(),
+  /**
+   * The domain terms this page's searches use, with the other names people search them by
+   * (issue #63, step 12.1 lexical expansion): the words the page should cover.
+   */
+  terms: z.array(z.string().min(1)).optional(),
+  /** The persona this page is mainly for (issue #63, step 1): a persona id from SiteMaps.personas. */
+  persona: z.string().min(1).optional(),
   /**
    * The site section the page lives in (issue #51): its page type, template and URL folder.
    * `suggested` marks a section the site doesn't have yet.
@@ -140,6 +173,8 @@ export const MapHeader = z.object({
   sourceContext: z.string().min(1),
   centralEntity: CentralEntity,
   centralSearchIntent: z.string().min(1),
+  /** Is the central entity a known thing (issue #63, step 3). */
+  entityCheck: EntityCheck.optional(),
   costUsd: z.number().nonnegative(),
 });
 export type MapHeader = z.infer<typeof MapHeader>;
@@ -245,6 +280,23 @@ export const SiteMaps = z.object({
       }),
     )
     .optional(),
+  /**
+   * The market around the map (issue #63): competitors' size and pace (steps 8 and 11), topics
+   * they cover that the research has no search for, the long curve of the central topics and
+   * rising searches without a page (step 14).
+   */
+  market: z
+    .object({
+      competitors: z.array(CompetitorSite).default([]),
+      gaps: z.array(GapTopic).default([]),
+      topics: z.array(TopicTrend).default([]),
+      trendIdeas: z.array(TrendIdea).default([]),
+    })
+    .optional(),
+  /** The domain's terms with their word relations from Wikidata (issue #63, step 7). */
+  glossary: z.array(GlossaryEntry).optional(),
+  /** The people behind the searches, each proven by their searches (issue #63, step 1). */
+  personas: z.array(Persona).optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z
     .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))

@@ -67,8 +67,10 @@ describe("pipelineStatus", () => {
     writeFileSync(join(dir, "owner-answers.json"), "{}");
     expect(actions(dir, runsDir)).toEqual(["business:apply", "filter:run"]);
 
-    // The data steps are done; the map still waits for the profile it is built on.
+    // The data steps go on; the map still waits for the profile it is built on.
     for (const file of ["queries.json", "clusters.json"]) writeFileSync(join(dir, file), "{}");
+    expect(actions(dir, runsDir)).toEqual(["business:apply", "signals:run"]);
+    writeFileSync(join(dir, "signals.json"), "{}");
     expect(actions(dir, runsDir)).toEqual(["business:apply"]);
   });
 
@@ -153,9 +155,18 @@ describe("pipelineStatus", () => {
     const key = JSON.parse(readFileSync(join(fixture, "business.key.json"), "utf8"));
     const profile = { ...key, confirmed: { by: "owner", at: "2026-11-15T10:00:00.000Z" } };
     writeFileSync(join(dir, "business.json"), JSON.stringify(profile));
+    writeFileSync(join(dir, "signals.json"), "{}");
     writeFileSync(join(dir, "topical-map.json"), "{}");
     const status = pipelineStatus(dir, { runsDir });
-    const order: PipelineStepId[] = ["context", "research", "business", "filter", "cluster", "map"];
+    const order: PipelineStepId[] = [
+      "context",
+      "research",
+      "business",
+      "filter",
+      "cluster",
+      "signals",
+      "map",
+    ];
     expect(status.steps.map((s) => s.step)).toEqual(order);
     expect(status.steps.map((s) => s.state)).toEqual(order.map(() => "ok"));
     expect(status).toMatchObject({ done: true, next: [] });

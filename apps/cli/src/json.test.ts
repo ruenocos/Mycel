@@ -238,6 +238,14 @@ const CASES: Case[] = [
     exitCode: 2,
   },
   {
+    name: "signals",
+    // No DataforSEO key in tests and no network: the run still writes signals.json.
+    ok: () => [at("clusters.json"), "--no-sitemaps", "--no-wikidata", "--provider", "fake"],
+    fail: () => [at("clusters.json"), "--budget", "abc"],
+    code: "USAGE",
+    exitCode: 2,
+  },
+  {
     name: "map",
     ok: () => [at("clusters.json"), "--provider", "fake"],
     // The run works, the map misses the client's gate: a failure that still has its outputs.
