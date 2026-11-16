@@ -240,7 +240,7 @@ const CASES: Case[] = [
   {
     name: "signals",
     // No DataforSEO key in tests and no network: the run still writes signals.json.
-    ok: () => [at("clusters.json"), "--no-sitemaps"],
+    ok: () => [at("clusters.json"), "--no-sitemaps", "--no-wikidata", "--provider", "fake"],
     fail: () => [at("clusters.json"), "--budget", "abc"],
     code: "USAGE",
     exitCode: 2,

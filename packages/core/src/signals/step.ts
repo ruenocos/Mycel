@@ -7,6 +7,7 @@ import {
   SignalSet,
 } from "@mycel/schema";
 import { z } from "zod";
+import type { JsonModel } from "../context/llm.ts";
 import { cleanDomain } from "../research/collect.ts";
 import { defineStep } from "../step.ts";
 import {
@@ -16,7 +17,17 @@ import {
   type SitemapLike,
   siteSignals,
 } from "./competitors.ts";
-import { TRENDS } from "./rules.ts";
+import {
+  buildGlossary,
+  type EntityLike,
+  entityCheck,
+  type HitLike,
+  pickExact,
+  pickItems,
+  termCandidates,
+  type WikidataPort,
+} from "./glossary.ts";
+import { GLOSSARY, TRENDS } from "./rules.ts";
 import { buildTrends, type ExploreLike, type HistoryLike } from "./trends.ts";
 
 /**
@@ -25,13 +36,17 @@ import { buildTrends, type ExploreLike, type HistoryLike } from "./trends.ts";
  * - Step 14: monthly searches per page (cached Labs data, then Google Ads for 24 months) and
  *   Google Trends for the central entity and the top offerings.
  * - Steps 8 and 11: competitors' sitemaps.
+ * - Steps 3 and 7: the central entity and the domain's terms against Wikidata (glossary).
  *
  * Paid calls (Google Ads volume, Google Trends) are cached and counted against the run budget;
  * sitemaps are free. A source that fails is a warning in the file, never a silent gap.
  */
 
-/** 1: trends (step 14) and competitor sitemaps (steps 8, 11). */
-export const SIGNALS_VERSION = "1";
+/**
+ * 1: trends (step 14) and competitor sitemaps (steps 8, 11).
+ * 2: central entity check and glossary from Wikidata (steps 3, 7; wikidata-pick v1).
+ */
+export const SIGNALS_VERSION = "2";
 
 // biome-ignore lint/suspicious/noExplicitAny: the recorder shape belongs to connectors; core passes its StepContext
 type Rec = any;
@@ -66,6 +81,10 @@ export const SignalsInput = z.object({
   /** Google Trends for the central entity and the top offerings. */
   explore: z.boolean().default(true),
   sitemaps: z.boolean().default(true),
+  /** The central entity and the glossary against Wikidata (free). */
+  wikidata: z.boolean().default(true),
+  /** The model that picks which Wikidata item a term means; without one, exact names only. */
+  model: z.string().min(1).optional(),
 });
 export type SignalsInput = z.input<typeof SignalsInput>;
 
@@ -103,7 +122,12 @@ export function trendTopics(context: ClientContext): string[] {
 const fatal = (err: unknown) =>
   err instanceof Error && /BudgetExceeded|LiveCallBlocked/.test(err.name || err.constructor.name);
 
-export function signalsStep(ports: { keywords?: TrendsPort; sitemaps?: SitemapPort }) {
+export function signalsStep(ports: {
+  keywords?: TrendsPort;
+  sitemaps?: SitemapPort;
+  wikidata?: WikidataPort;
+  llm?: JsonModel;
+}) {
   return defineStep({
     name: "signals",
     version: SIGNALS_VERSION,
@@ -215,6 +239,56 @@ export function signalsStep(ports: { keywords?: TrendsPort; sitemaps?: SitemapPo
           pages: sites.map((s) => `${s.domain}:${s.pages}`),
           covered: out.competitors.coverage.length,
           gaps: out.competitors.gaps?.length ?? 0,
+        });
+      }
+      if (ports.wikidata && input.wikidata) {
+        const language = market.language;
+        const terms = termCandidates(context, input.queries);
+        const names = context.centralEntities.map((e) => e.name);
+        const asked = [...new Set([...names, ...terms.map((t) => t.term)])];
+        const items: { term: string; candidates: HitLike[] }[] = [];
+        let failed = 0;
+        let lastError: unknown;
+        for (const term of asked) {
+          try {
+            const hits = await ports.wikidata.search(term, language, ctx);
+            items.push({ term, candidates: hits.slice(0, GLOSSARY.candidates) });
+          } catch (err) {
+            failed++;
+            lastError = err;
+          }
+        }
+        if (failed)
+          warn(`Wikidata search failed for ${failed} of ${asked.length} terms`, lastError);
+        let picked = pickExact(items);
+        if (ports.llm && input.model) {
+          try {
+            picked = await pickItems(ports.llm, context, items, { model: input.model }, ctx);
+          } catch (err) {
+            warn("the model could not match terms to Wikidata, exact names only", err);
+          }
+        }
+        const entities = new Map<string, EntityLike>();
+        const ids = [...new Set(picked.values())];
+        if (ids.length) {
+          try {
+            for (const e of await ports.wikidata.entities(ids, language, ctx))
+              entities.set(e.id, e);
+          } catch (err) {
+            warn("Wikidata entities could not be read", err);
+          }
+        }
+        const reached = items.length > 0;
+        out.entities = names.map((n) => {
+          const id = picked.get(n);
+          return entityCheck(n, id ? entities.get(id) : undefined, reached);
+        });
+        out.glossary = buildGlossary({ terms, picked, entities, queries: input.queries, language });
+        ctx.log.info("wikidata", {
+          terms: terms.length,
+          searched: items.length,
+          matched: picked.size,
+          recognized: out.entities.filter((e) => e.recognized).map((e) => e.name),
         });
       }
       return out;

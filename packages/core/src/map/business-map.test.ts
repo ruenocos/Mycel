@@ -425,6 +425,29 @@ describe("mapStep with a business profile", () => {
             { topic: "fiets laadpaal", competitors: ["rival.nl", "ander.nl"], pages: 4, urls: [] },
           ],
         },
+        entities: [
+          {
+            name: "fiets",
+            recognized: true,
+            wikidata: { id: "Q11442", label: "fiets" },
+            aliases: ["rijwiel"],
+            broader: ["voertuig"],
+            note: "A known thing.",
+          },
+        ],
+        glossary: [
+          {
+            term: "fietsreparatie",
+            queries: 3,
+            volume: 3500,
+            synonyms: ["fietsherstel"],
+            searchedAs: [],
+            broader: [],
+            parts: [],
+            partOf: [],
+            related: [],
+          },
+        ],
       },
     });
     const map = maps.maps[0] as (typeof maps.maps)[number];
@@ -443,6 +466,9 @@ describe("mapStep with a business profile", () => {
       expect(band.trend).toMatchObject({ label: "seasonal", publishBy: 2 });
       expect(band.why).toContain("zet de pagina vóór februari online");
     }
+    expect(cost?.terms).toEqual(["fietsreparatie", "fietsherstel"]);
+    expect(map.header.entityCheck).toMatchObject({ recognized: true, wikidata: { id: "Q11442" } });
+    expect(maps.glossary?.[0]?.term).toBe("fietsreparatie");
     expect(maps.market).toMatchObject({
       competitors: [{ domain: "rival.nl", pages: 120 }],
       gaps: [{ topic: "fiets laadpaal" }],

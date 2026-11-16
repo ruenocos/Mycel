@@ -69,3 +69,48 @@ export const URL_NOISE = new Set([
   "ons",
   "wij",
 ]);
+
+export const GLOSSARY = {
+  /** Terms kept in the glossary. */
+  max: 40,
+  /** A term must appear in this many kept searches (central entity and offerings always count). */
+  minQueries: 3,
+  /** Terms per model call when matching them to Wikidata. */
+  batch: 20,
+  /** Wikidata candidates shown per term. */
+  candidates: 6,
+  /** Terms listed on one page (lexical expansion, step 12.1). */
+  perPage: 10,
+};
+
+/**
+ * Words that say what someone wants to do, not what about: they make no glossary term.
+ * Per market language; generic, nothing client-specific.
+ */
+export const MODIFIERS: Record<string, Set<string>> = {
+  nl: new Set([
+    ...["kopen", "koop", "bestellen", "prijs", "prijzen", "kosten", "kost", "goedkoop", "goedkope"],
+    ...["beste", "top", "online", "review", "reviews", "ervaringen", "vergelijken", "vergelijking"],
+    ...["tips", "tip", "soorten", "welke", "waar", "nodig", "maken", "zelf", "laten", "wat", "hoe"],
+    ...["bij", "mij", "buurt", "nabij", "voor", "zonder", "met", "per", "over", "naar", "uit"],
+    ...[
+      "is",
+      "zijn",
+      "kan",
+      "mag",
+      "moet",
+      "word",
+      "wordt",
+      "worden",
+      "doen",
+      "the",
+      "nieuw",
+      "nieuwe",
+    ],
+  ]),
+  en: new Set([
+    ...["buy", "order", "price", "prices", "cost", "costs", "cheap", "best", "top", "online"],
+    ...["review", "reviews", "compare", "comparison", "tips", "types", "which", "where", "near"],
+    ...["me", "how", "what", "why", "make", "diy", "for", "without", "with", "per", "new", "is"],
+  ]),
+};

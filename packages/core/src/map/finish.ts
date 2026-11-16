@@ -2,6 +2,7 @@ import type {
   ClientContext,
   ClusterTrend,
   LeftOut,
+  MapHeader,
   MapNode,
   MapSection,
   MenuGroup,
@@ -10,6 +11,7 @@ import type {
   SiteSection,
   TopicalMap,
 } from "@mycel/schema";
+import { pageTerms } from "../signals/glossary.ts";
 import { applyBudget } from "./budget.ts";
 import { checkText, claimFacts, plainName, plainWhy, signalWhy } from "./check.ts";
 import { wordRivals } from "./conflict.ts";
@@ -181,6 +183,7 @@ export function finishMaps(input: FinishInput): SiteMaps {
     ...[...suggested.values()].map((s) => ({ ...s, suggested: true })),
   ];
   const sig = input.signals;
+  const glossary = sig?.glossary?.length ? { glossary: sig.glossary } : {};
   const market =
     sig && (sig.trends || sig.competitors)
       ? {
@@ -198,8 +201,15 @@ export function finishMaps(input: FinishInput): SiteMaps {
     siteSections: siteSectionList,
     inventory,
     ...market,
+    ...glossary,
     outside,
   };
+}
+
+/** The central entity's Wikidata check for this map's header. */
+function entityCheckOf(sig: SignalSet | undefined, entity: string): Pick<MapHeader, "entityCheck"> {
+  const e = sig?.entities?.find((x) => x.name === entity);
+  return e ? { entityCheck: e } : {};
 }
 
 /** What the signals add to a page's value input. */
@@ -563,6 +573,18 @@ function finishOne(
     return plainWhy(n, ctx.market.language, offeringName(offeringOf(n)));
   };
 
+  // The words a page should cover: glossary terms in its searches and their other names (12.1).
+  const glossaryList = input.signals?.glossary ?? [];
+  const termsField = (n: NodeDraft): Pick<MapNode, "terms"> => {
+    if (!glossaryList.length) return {};
+    const terms = pageTerms(
+      [n.mainQuery, ...n.queries, ...n.sections.map((x) => x.mainQuery)],
+      glossaryList,
+      ctx.market.language,
+    );
+    return terms.length ? { terms } : {};
+  };
+
   // The why, with what the signals add in plain words (issue #63).
   const withSignals = (why: string, n: NodeDraft) => {
     if (n.isRoot || n.hub === "theme" || n.hub === "site") return why;
@@ -693,6 +715,7 @@ function finishOne(
       flags: { quality: quality.has(n.id), trending: trendOf(n)?.label === "rising" },
       ...trendField(trendOf(n)),
       ...(rivalsOf(n)?.length ? { competitors: rivalsOf(n) } : {}),
+      ...termsField(n),
       ...siteSectionOf(n.id),
       linksOut: linksOf(n),
       aiOverview: n.aiOverview,
@@ -727,6 +750,7 @@ function finishOne(
         sourceContext: ctx.sourceContext,
         centralEntity: centralEntity as ClientContext["centralEntities"][number],
         centralSearchIntent: ctx.centralSearchIntent,
+        ...entityCheckOf(input.signals, entity),
         costUsd: input.costUsd,
       },
       nodes: mapNodes,

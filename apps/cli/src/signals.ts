@@ -1,6 +1,15 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { FileCache, historyPlan, SitemapReader } from "@mycel/connectors";
+import {
+  FakeProvider,
+  FileCache,
+  historyPlan,
+  LlmClient,
+  type LlmProvider,
+  OllamaProvider,
+  SitemapReader,
+  WikidataClient,
+} from "@mycel/connectors";
 import {
   CORE_VERSION,
   monthStart,
@@ -11,6 +20,7 @@ import {
   signalsStep,
   type TrendsPort,
   trendTopics,
+  type WikidataPort,
 } from "@mycel/core";
 import {
   ClientContext,
@@ -42,6 +52,17 @@ import type { CommandResult } from "./run-command.ts";
  */
 
 const CLUSTERS_FILE = { name: "clusters file", writtenBy: "mycel cluster" };
+
+/** The fake model matches no term to Wikidata; the real one picks between the candidates. */
+function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
+  const fake = new FakeProvider([], () => JSON.stringify({ results: [] }));
+  const ollama = new OllamaProvider({
+    host: env.OLLAMA_HOST ?? "https://ollama.com",
+    ...(env.OLLAMA_API_KEY ? { apiKey: env.OLLAMA_API_KEY } : {}),
+    timeoutMs: 300_000,
+  });
+  return [fake, ollama];
+}
 
 const pct = (x: number) => `${x > 0 ? "+" : ""}${Math.round(x * 100)}%`;
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -93,6 +114,20 @@ export function summarizeSignals(d: SignalSet): string[] {
       );
     }
   }
+  for (const e of d.entities ?? []) {
+    lines.push(
+      `entity      ${e.name}: ${e.recognized ? `known to Wikidata as ${e.wikidata?.id} (${e.wikidata?.description ?? "no description"})` : "not a known thing in Wikidata"}`,
+    );
+  }
+  if (d.glossary?.length) {
+    const matched = d.glossary.filter((g) => g.wikidata).length;
+    lines.push(
+      `glossary    ${d.glossary.length} terms, ${matched} matched to Wikidata: ${d.glossary
+        .slice(0, 8)
+        .map((g) => g.term)
+        .join(", ")}`,
+    );
+  }
   for (const w of d.warnings) lines.push(`note        ${w}`);
   return lines;
 }
@@ -111,6 +146,10 @@ export interface SignalsOptions {
   buy?: boolean;
   /** Skip competitors' sitemaps. */
   noSitemaps?: boolean;
+  /** Skip the Wikidata check and the glossary. */
+  noWikidata?: boolean;
+  provider: string;
+  model: string;
   dryRun?: boolean;
   budgetUsd?: number;
   cacheDir?: string;
@@ -118,7 +157,7 @@ export interface SignalsOptions {
   debug?: boolean;
   env?: NodeJS.ProcessEnv;
   /** Tests pass stubs. */
-  ports?: { keywords?: TrendsPort; sitemaps?: SitemapPort };
+  ports?: { keywords?: TrendsPort; sitemaps?: SitemapPort; wikidata?: WikidataPort };
   now?: string;
 }
 
@@ -161,6 +200,7 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
     `searches    ${plan.ads.calls} Google Ads call(s) for monthly searches, ${plan.ads.toBuy} to buy`,
     `trends      ${plan.trends.calls} Google Trends call(s), ${plan.trends.toBuy} to buy`,
     `sitemaps    ${opts.noSitemaps ? "skipped" : "free, read from the competitors' own sites"}`,
+    `wikidata    ${opts.noWikidata ? "skipped" : "free; the model picks which item a term means"}`,
   ];
   const toBuy = plan.ads.toBuy + plan.trends.toBuy;
 
@@ -191,6 +231,10 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
   const sitemaps: SitemapPort | undefined = opts.noSitemaps
     ? undefined
     : (opts.ports?.sitemaps ?? new SitemapReader({ cacheDir: join(cacheDir, "sitemaps") }));
+  const wikidata: WikidataPort | undefined = opts.noWikidata
+    ? undefined
+    : (opts.ports?.wikidata ?? new WikidataClient({ cacheDir: join(cacheDir, "wikidata") }));
+  const llm = new LlmClient({ providers: providers(env), defaultProvider: opts.provider });
   const run = RunStore.create({
     runsDir: opts.runsDir,
     client: new URL(clusters.site.url).hostname,
@@ -204,6 +248,8 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
       buy: !!opts.buy,
       budgetUsd,
       sitemaps: !opts.noSitemaps,
+      wikidata: !opts.noWikidata,
+      model: opts.model,
     },
     ...(opts.debug ? { consoleLevel: "debug" as const } : {}),
   });
@@ -227,6 +273,7 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
       signalsStep({
         ...(keywords ? { keywords } : {}),
         ...(sitemaps ? { sitemaps } : {}),
+        ...(wikidata ? { wikidata, llm } : {}),
       }),
       {
         context,
@@ -237,6 +284,8 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
         adsHistory,
         explore,
         sitemaps: !opts.noSitemaps,
+        wikidata: !opts.noWikidata,
+        model: opts.model,
       },
     );
     out = opts.out ?? join(dir, "signals.json");

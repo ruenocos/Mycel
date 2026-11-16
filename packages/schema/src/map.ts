@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { CentralEntity } from "./context.ts";
-import { CompetitorSite, GapTopic, TopicTrend, TrendIdea, TrendLabel } from "./signals.ts";
+import {
+  CompetitorSite,
+  EntityCheck,
+  GapTopic,
+  GlossaryEntry,
+  TopicTrend,
+  TrendIdea,
+  TrendLabel,
+} from "./signals.ts";
 import { SectionRole, SiteSection } from "./site.ts";
 
 /** Fields follow the "Topical map examples" doc: Koray SOP structure + status, priority and a plain "why". */
@@ -127,6 +135,11 @@ export const MapNode = z.object({
   /** Competitors with a page on this topic, from their sitemaps (issue #63, step 11). */
   competitors: z.array(z.string().min(1)).optional(),
   /**
+   * The domain terms this page's searches use, with the other names people search them by
+   * (issue #63, step 12.1 lexical expansion): the words the page should cover.
+   */
+  terms: z.array(z.string().min(1)).optional(),
+  /**
    * The site section the page lives in (issue #51): its page type, template and URL folder.
    * `suggested` marks a section the site doesn't have yet.
    */
@@ -157,6 +170,8 @@ export const MapHeader = z.object({
   sourceContext: z.string().min(1),
   centralEntity: CentralEntity,
   centralSearchIntent: z.string().min(1),
+  /** Is the central entity a known thing (issue #63, step 3). */
+  entityCheck: EntityCheck.optional(),
   costUsd: z.number().nonnegative(),
 });
 export type MapHeader = z.infer<typeof MapHeader>;
@@ -275,6 +290,8 @@ export const SiteMaps = z.object({
       trendIdeas: z.array(TrendIdea).default([]),
     })
     .optional(),
+  /** The domain's terms with their word relations from Wikidata (issue #63, step 7). */
+  glossary: z.array(GlossaryEntry).optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z
     .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))

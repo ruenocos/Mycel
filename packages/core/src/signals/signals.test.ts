@@ -388,3 +388,97 @@ describe("signals step", () => {
     expect(trendTopics(context)).toEqual(["kamerplant", "grote kamerplanten", "hangplanten"]);
   });
 });
+
+describe("signals step with Wikidata (steps 3 and 7)", () => {
+  it("checks the central entity and builds the glossary; the model only picks", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "../../../../fixtures/clients/plantpost/context.json"),
+        "utf8",
+      ),
+    );
+    const kept = (t: string, volume = 100) => ({
+      text: t,
+      normalized: t,
+      sources: ["dfs_related" as const],
+      metrics: { volume },
+      filter: { kept: true },
+      scores: { relevance: 1, prominence: 1, popularity: 1 },
+    });
+    const run = RunStore.create({
+      runsDir: mkdtempSync(join(tmpdir(), "mycel-signals-wd-")),
+      client: "plantpost.example",
+      command: "signals",
+      cliVersion: "test",
+    });
+    const searched: string[] = [];
+    const result = await runStep(
+      run,
+      signalsStep({
+        wikidata: {
+          search: async (term) => {
+            searched.push(term);
+            if (term === "kamerplant") {
+              return [{ id: "Q1", label: "kamerplant", description: "plant voor binnen" }];
+            }
+            if (term === "monstera")
+              return [{ id: "Q10", label: "Monstera", description: "plantengeslacht" }];
+            return [];
+          },
+          entities: async (ids) =>
+            ids.map((id) => ({
+              id,
+              label: id === "Q1" ? "kamerplant" : "Monstera",
+              aliases: id === "Q10" ? ["gatenplant"] : [],
+              broader: ["plant"],
+              parts: [],
+              partOf: [],
+            })),
+        },
+      }),
+      {
+        context: fixture,
+        clusters: {
+          site: fixture.site,
+          market: fixture.market,
+          minSharedUrls: 3,
+          clusters: [],
+          unclustered: [],
+          stats: {
+            queries: 0,
+            clustered: 0,
+            clusters: 0,
+            pages: 0,
+            sections: 0,
+            micro: 0,
+            singletons: 0,
+            outliers: 0,
+            ambiguousMembers: 0,
+            borderlineMembers: 0,
+          },
+        },
+        queries: [
+          kept("monstera kopen"),
+          kept("monstera verzorgen"),
+          kept("monstera stekken"),
+          kept("gatenplant kopen"),
+        ],
+        now: NOW.toISOString(),
+      },
+    );
+    run.finish();
+    expect(searched[0]).toBe("kamerplant");
+    expect(result.entities).toEqual([
+      expect.objectContaining({
+        name: "kamerplant",
+        recognized: true,
+        wikidata: { id: "Q1", label: "kamerplant" },
+      }),
+    ]);
+    expect(result.glossary?.find((g) => g.term === "monstera")).toMatchObject({
+      wikidata: { id: "Q10" },
+      searchedAs: ["gatenplant"],
+      broader: ["plant"],
+    });
+  });
+});

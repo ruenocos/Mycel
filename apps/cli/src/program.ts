@@ -557,7 +557,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
   program
     .command("signals")
     .description(
-      "Steps 8, 11 and 14: trends per page and competitors' size, depth and pace, for the map",
+      "Steps 3, 7, 8, 11 and 14: trends, competitors' size and pace, entity check and glossary, for the map",
     )
     .argument("<clusters>", "clusters.json written by mycel cluster")
     .option("--queries <file>", "queries.json (default: next to clusters)")
@@ -570,6 +570,9 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
     .option("--buy", "buy monthly searches and Google Trends that aren't cached (a few cents)")
     .option("--budget <usd>", "DataforSEO budget for this run", "0.5")
     .option("--no-sitemaps", "don't read competitors' sitemaps")
+    .option("--no-wikidata", "don't check the central entity and the glossary against Wikidata")
+    .addOption(provider())
+    .option("--model <model>", "model that picks which Wikidata item a term means", DEFAULT_MODEL)
     .option(...DRY_RUN)
     .option(...UNCONFIRMED)
     .option(...DEBUG)
@@ -595,6 +598,9 @@ are free; a site that blocks the request is listed as blocked, never worked arou
           buy?: boolean;
           budget: string;
           sitemaps: boolean;
+          wikidata: boolean;
+          provider: string;
+          model: string;
           dryRun?: boolean;
           allowUnconfirmed?: boolean;
           debug?: boolean;
@@ -612,6 +618,9 @@ are free; a site that blocks the request is listed as blocked, never worked arou
             ...(opts.out ? { out: opts.out } : {}),
             ...(opts.buy ? { buy: true } : {}),
             ...(opts.sitemaps === false ? { noSitemaps: true } : {}),
+            ...(opts.wikidata === false ? { noWikidata: true } : {}),
+            provider: opts.provider,
+            model: opts.model,
             ...(opts.dryRun ? { dryRun: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
           }),

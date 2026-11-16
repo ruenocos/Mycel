@@ -9,6 +9,9 @@ import { Market } from "./context.ts";
  * - Steps 8 and 11, competitors: their sitemaps give their size (vastness), how many pages they
  *   have per topic (depth) and how often they change pages (momentum), plus topics they write
  *   about that have no search in the research yet (gaps).
+ * - Step 3, central entity: is it a thing Wikidata (and so Google's knowledge graph) knows.
+ * - Step 7, glossary: the domain's terms from the searches, with what Wikidata says about them:
+ *   a short description, other names, broader terms and parts (word relations).
  */
 
 const Month = z.string().regex(/^\d{4}-\d{2}$/, "YYYY-MM");
@@ -120,12 +123,58 @@ export const CompetitorSignals = z.object({
 });
 export type CompetitorSignals = z.infer<typeof CompetitorSignals>;
 
+/** A Wikidata item, as proof of what a term means. */
+export const WikidataRef = z.object({
+  id: z.string().regex(/^Q\d+$/, "a Wikidata item id"),
+  label: z.string().optional(),
+  /** Wikidata's own short description: a sourced definition, never the model's. */
+  description: z.string().optional(),
+  wikipedia: z.url().optional(),
+});
+export type WikidataRef = z.infer<typeof WikidataRef>;
+
+/** Step 3: is the central entity a known thing (Koray: check it has its own Wikipedia page). */
+export const EntityCheck = z.object({
+  name: z.string().min(1),
+  /** Wikidata has an item that means this entity as the business uses it. */
+  recognized: z.boolean(),
+  wikidata: WikidataRef.optional(),
+  /** Other names and broader terms from Wikidata. */
+  aliases: z.array(z.string()).default([]),
+  broader: z.array(z.string()).default([]),
+  /** What it means for the map, in English (shown to people through the explorer). */
+  note: z.string().min(1),
+});
+export type EntityCheck = z.infer<typeof EntityCheck>;
+
+/** Step 7: one domain term from the searches, with its word relations. */
+export const GlossaryEntry = z.object({
+  term: z.string().min(1),
+  /** Kept searches it appears in, and their summed volume. */
+  queries: z.number().int().nonnegative(),
+  volume: z.number().int().nonnegative(),
+  wikidata: WikidataRef.optional(),
+  /** Other names (Wikidata aliases in the market language). */
+  synonyms: z.array(z.string()).default([]),
+  /** Of those, the ones people actually searched. */
+  searchedAs: z.array(z.string()).default([]),
+  /** Broader terms (hypernyms), parts (meronyms) and wholes it is part of. */
+  broader: z.array(z.string()).default([]),
+  parts: z.array(z.string()).default([]),
+  partOf: z.array(z.string()).default([]),
+  /** Glossary terms searched together with it most (query paths). */
+  related: z.array(z.string()).default([]),
+});
+export type GlossaryEntry = z.infer<typeof GlossaryEntry>;
+
 export const SignalSet = z.object({
   site: z.object({ url: z.url(), name: z.string().min(1) }),
   market: Market,
   createdAt: z.iso.datetime(),
   trends: TrendSignals.optional(),
   competitors: CompetitorSignals.optional(),
+  entities: z.array(EntityCheck).optional(),
+  glossary: z.array(GlossaryEntry).optional(),
   warnings: z.array(z.string()).default([]),
 });
 export type SignalSet = z.infer<typeof SignalSet>;

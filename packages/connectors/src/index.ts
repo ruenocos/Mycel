@@ -61,6 +61,14 @@ export {
   type SiteSitemap,
 } from "./sitemap/client.ts";
 export {
+  parseEntities,
+  WikidataClient,
+  type WikidataEntity,
+  WikidataError,
+  type WikidataHit,
+  type WikidataOptions,
+} from "./wikidata/client.ts";
+export {
   commonFolder,
   decodeEntities,
   folderOf,
