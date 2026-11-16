@@ -41,7 +41,7 @@ async function json(...args: string[]) {
   const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   try {
     await runCli(
-      ["node", "mycel", "--runs-dir", at("runs"), ...args, "--json"],
+      ["node", "mycel", "--runs-dir", at("runs"), "--cache-dir", at("cache"), ...args, "--json"],
       (s) => out.push(s),
       {
         err: (s) => err.push(s),

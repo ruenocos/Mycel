@@ -130,6 +130,11 @@ export function buildProgram(
     .description("Build a data-driven topical map. A human approves everything.")
     .option("-V, --version", "show the version and the git commit of the code")
     .option("--runs-dir <dir>", "where runs are stored", "runs")
+    .option(
+      "--cache-dir <dir>",
+      "where paid and fetched answers are cached (or MYCEL_CACHE_DIR)",
+      process.env.MYCEL_CACHE_DIR || ".cache",
+    )
     .option(...JSON_FLAG)
     // A wrong flag throws instead of exiting, so index.ts can give it exit code 2.
     .exitOverride()
@@ -147,6 +152,7 @@ export function buildProgram(
     throw new CommanderError(0, "commander.version", versionLine());
   });
   const runsDir = () => program.opts<{ runsDir: string }>().runsDir;
+  const cacheDir = () => program.opts<{ cacheDir: string }>().cacheDir;
   /** The command that is running: its name as typed, and whether it was asked for JSON. */
   let current = { name: "", json: false };
   program.hook("preAction", (_program, action) => {
@@ -221,6 +227,7 @@ export function buildProgram(
         run(opts, () =>
           contextPropose({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             site,
             provider: opts.provider,
             model: opts.model,
@@ -306,6 +313,7 @@ export function buildProgram(
         run(opts, () =>
           businessPropose({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             contextFile,
             site: opts.site,
             provider: opts.provider,
@@ -445,6 +453,7 @@ export function buildProgram(
         run(opts, () =>
           research({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             contextFile,
             provider: opts.provider,
             model: opts.model === false ? "none" : opts.model,
@@ -541,6 +550,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
         run(opts, () =>
           clusterRun({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             queriesFile,
             liveSerp: !!opts.liveSerp,
             budgetUsd: Number(opts.budget),
@@ -609,6 +619,7 @@ are free; a site that blocks the request is listed as blocked, never worked arou
         run(opts, () =>
           signalsRun({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             clustersFile,
             budgetUsd: Number(opts.budget),
             allowUnconfirmed: !!opts.allowUnconfirmed,
@@ -672,6 +683,7 @@ are free; a site that blocks the request is listed as blocked, never worked arou
         run(opts, () =>
           mapRun({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             clustersFile,
             provider: opts.provider,
             model: opts.model,
@@ -829,6 +841,7 @@ older than a file it was made from, or when the step that made it has a newer ve
         run(opts, () =>
           evalMapRun({
             runsDir: runsDir(),
+            cacheDir: cacheDir(),
             mapFile,
             serps: opts.serps,
             ...(opts.context ? { contextFile: opts.context } : {}),

@@ -39,7 +39,17 @@ export interface WikidataOptions {
   cacheDir?: string;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /** Pause between requests (default 1 s). */
   pauseMs?: number;
+  /** Tries per request when Wikidata says slow down (429, 503 or maxlag); default 4. */
+  attempts?: number;
+}
+
+/** How long to wait before the next try: the server's Retry-After, else 5, 10, 20 s. Max 60 s. */
+export function backoffMs(retryAfter: string | null, attempt: number): number {
+  const s = Number(retryAfter);
+  const ms = Number.isFinite(s) && s > 0 ? s * 1000 : 5000 * 2 ** attempt;
+  return Math.min(ms, 60_000);
 }
 
 type Raw = Record<string, unknown>;
@@ -213,15 +223,30 @@ export class WikidataClient {
       });
       return cached;
     }
-    if (this.calls++ > 0) await this.sleep(this.opts.pauseMs ?? 300);
+    if (this.calls++ > 0) await this.sleep(this.opts.pauseMs ?? 1000);
     const t0 = Date.now();
     let status: number | "error" = "error";
     try {
-      const res = await this.fetchImpl(url, { headers: { Accept: "application/json" } });
-      status = res.status;
-      const body = await res.text();
-      if (!res.ok) throw new WikidataError(`${endpoint}: HTTP ${res.status} ${body.slice(0, 120)}`);
-      const json = JSON.parse(body) as Raw;
+      const attempts = this.opts.attempts ?? 4;
+      let json: Raw = {};
+      for (let attempt = 0; ; attempt++) {
+        const res = await this.fetchImpl(url, { headers: { Accept: "application/json" } });
+        status = res.status;
+        const body = await res.text();
+        const slowDown = res.status === 429 || res.status === 503;
+        if (!res.ok && !slowDown)
+          throw new WikidataError(`${endpoint}: HTTP ${res.status} ${body.slice(0, 120)}`);
+        json = slowDown ? {} : (JSON.parse(body) as Raw);
+        const lag = str(obj(json.error).code) === "maxlag";
+        if (!slowDown && !lag) break;
+        // Wikimedia asks bots to wait and try again, not to give up or push on.
+        if (attempt + 1 >= attempts) {
+          throw new WikidataError(
+            `${endpoint}: ${slowDown ? `HTTP ${res.status}` : "maxlag"} after ${attempts} tries`,
+          );
+        }
+        await this.sleep(backoffMs(res.headers.get("retry-after"), attempt));
+      }
       if (json.error)
         throw new WikidataError(`${endpoint}: ${str(obj(json.error).info) ?? "error"}`);
       rec.recordApiCall({

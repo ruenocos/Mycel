@@ -126,9 +126,11 @@ export function trendOf(
   if (monthly.length >= 15) {
     const recent = monthly.slice(-3).reduce((s, m) => s + m.volume, 0);
     const before = monthly.slice(-15, -12).reduce((s, m) => s + m.volume, 0);
-    if (before > 0) change = recent / before - 1;
+    // No searches at all in the last three months is a gap in the data, not a fall to zero.
+    if (before > 0 && recent > 0) change = recent / before - 1;
   }
-  if (change === undefined && yearlyPct !== undefined) change = yearlyPct / 100;
+  // Labs gives -100% when its latest month is still empty: the same gap.
+  if (change === undefined && yearlyPct !== undefined && yearlyPct > -95) change = yearlyPct / 100;
   const byMonth = Array.from({ length: 12 }, () => 0);
   const counts = Array.from({ length: 12 }, () => 0);
   for (const m of last12) {

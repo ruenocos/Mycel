@@ -92,6 +92,14 @@ describe("trends (step 14)", () => {
     expect(peaksOf(Array(12).fill(40))).toEqual([]);
   });
 
+  it("reads three empty months or Labs' -100% as a gap in the data, not a fall to zero", () => {
+    const gap = series([2024, 11], [...Array(21).fill(60), 0, 0, 0]);
+    expect(trendOf(asPoints({ keyword: "x", monthly: gap }))?.change).toBeUndefined();
+    const flat = series([2025, 11], Array(12).fill(60));
+    expect(trendOf(asPoints({ keyword: "x", monthly: flat }), -100)?.change).toBeUndefined();
+    expect(trendOf(asPoints({ keyword: "x", monthly: flat }), 40)?.change).toBe(0.4);
+  });
+
   it("says nothing about a search with too little history or demand", () => {
     expect(
       trendOf(asPoints({ keyword: "x", monthly: series([2025, 1], [5, 5, 5, 5, 5, 5, 5, 5]) })),
