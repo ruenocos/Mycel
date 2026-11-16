@@ -448,6 +448,20 @@ describe("mapStep with a business profile", () => {
             related: [],
           },
         ],
+        personas: [
+          {
+            id: "forens",
+            name: "Forens",
+            who: "Fietst elke dag naar het werk en wil snel weer rijden.",
+            stage: "buy",
+            needs: [],
+            evidence: ["fietsreparatie kosten", "fiets reparatie snel", "fiets laten maken"],
+            volume: 3000,
+            offerings: [],
+            clusters: ["kosten"],
+            source: "model",
+          },
+        ],
       },
     });
     const map = maps.maps[0] as (typeof maps.maps)[number];
@@ -469,6 +483,8 @@ describe("mapStep with a business profile", () => {
     expect(cost?.terms).toEqual(["fietsreparatie", "fietsherstel"]);
     expect(map.header.entityCheck).toMatchObject({ recognized: true, wikidata: { id: "Q11442" } });
     expect(maps.glossary?.[0]?.term).toBe("fietsreparatie");
+    expect(cost?.persona).toBe("forens");
+    expect(maps.personas?.[0]?.name).toBe("Forens");
     expect(maps.market).toMatchObject({
       competitors: [{ domain: "rival.nl", pages: 120 }],
       gaps: [{ topic: "fiets laadpaal" }],

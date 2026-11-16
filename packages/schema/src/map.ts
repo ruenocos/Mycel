@@ -5,6 +5,7 @@ import {
   EntityCheck,
   GapTopic,
   GlossaryEntry,
+  Persona,
   TopicTrend,
   TrendIdea,
   TrendLabel,
@@ -139,6 +140,8 @@ export const MapNode = z.object({
    * (issue #63, step 12.1 lexical expansion): the words the page should cover.
    */
   terms: z.array(z.string().min(1)).optional(),
+  /** The persona this page is mainly for (issue #63, step 1): a persona id from SiteMaps.personas. */
+  persona: z.string().min(1).optional(),
   /**
    * The site section the page lives in (issue #51): its page type, template and URL folder.
    * `suggested` marks a section the site doesn't have yet.
@@ -292,6 +295,8 @@ export const SiteMaps = z.object({
     .optional(),
   /** The domain's terms with their word relations from Wikidata (issue #63, step 7). */
   glossary: z.array(GlossaryEntry).optional(),
+  /** The people behind the searches, each proven by their searches (issue #63, step 1). */
+  personas: z.array(Persona).optional(),
   /** Existing pages that serve no map page (news, team, off-topic articles): outside the map. */
   outside: z
     .array(z.object({ url: z.string().min(1), kind: z.string().min(1), title: z.string() }))

@@ -27,6 +27,13 @@ import {
   termCandidates,
   type WikidataPort,
 } from "./glossary.ts";
+import {
+  assignClusters,
+  audiencePersonas,
+  checkPersonas,
+  personaPool,
+  proposePersonas,
+} from "./personas.ts";
 import { GLOSSARY, TRENDS } from "./rules.ts";
 import { buildTrends, type ExploreLike, type HistoryLike } from "./trends.ts";
 
@@ -37,6 +44,7 @@ import { buildTrends, type ExploreLike, type HistoryLike } from "./trends.ts";
  *   Google Trends for the central entity and the top offerings.
  * - Steps 8 and 11: competitors' sitemaps.
  * - Steps 3 and 7: the central entity and the domain's terms against Wikidata (glossary).
+ * - Step 1: personas, the people behind the searches, each proven by searches they made.
  *
  * Paid calls (Google Ads volume, Google Trends) are cached and counted against the run budget;
  * sitemaps are free. A source that fails is a warning in the file, never a silent gap.
@@ -45,8 +53,9 @@ import { buildTrends, type ExploreLike, type HistoryLike } from "./trends.ts";
 /**
  * 1: trends (step 14) and competitor sitemaps (steps 8, 11).
  * 2: central entity check and glossary from Wikidata (steps 3, 7; wikidata-pick v1).
+ * 3: personas from the searches (step 1; personas v1), with the pages mainly for each.
  */
-export const SIGNALS_VERSION = "2";
+export const SIGNALS_VERSION = "3";
 
 // biome-ignore lint/suspicious/noExplicitAny: the recorder shape belongs to connectors; core passes its StepContext
 type Rec = any;
@@ -83,7 +92,12 @@ export const SignalsInput = z.object({
   sitemaps: z.boolean().default(true),
   /** The central entity and the glossary against Wikidata (free). */
   wikidata: z.boolean().default(true),
-  /** The model that picks which Wikidata item a term means; without one, exact names only. */
+  /** Personas from the searches (step 1); without a model, from the context's audiences. */
+  personas: z.boolean().default(true),
+  /**
+   * The model that picks which Wikidata item a term means and groups searches into personas;
+   * without one, exact names only and audience personas.
+   */
   model: z.string().min(1).optional(),
 });
 export type SignalsInput = z.input<typeof SignalsInput>;
@@ -291,7 +305,41 @@ export function signalsStep(ports: {
           recognized: out.entities.filter((e) => e.recognized).map((e) => e.name),
         });
       }
+      if (input.personas) {
+        let drafts = audiencePersonas(context, input.queries);
+        if (ports.llm && input.model) {
+          const pool = personaPool(context, input.queries);
+          if (pool.length >= PERSONA_MIN_POOL) {
+            try {
+              const found = checkPersonas(
+                await proposePersonas(ports.llm, context, pool, { model: input.model }, ctx),
+                pool,
+                context,
+              );
+              if (found.length) drafts = found;
+              else
+                warnings.push(
+                  "the model's personas had too little proof in the searches: personas from the audiences",
+                );
+            } catch (err) {
+              warn(
+                "the model could not group the searches into personas, personas from the audiences",
+                err,
+              );
+            }
+          }
+        }
+        const personas = assignClusters(drafts, clusters.clusters, context);
+        out.personas = personas;
+        ctx.log.info("personas", {
+          personas: personas.map((p) => `${p.id}:${p.evidence.length}:${p.clusters.length}`),
+          source: personas[0]?.source ?? "none",
+        });
+      }
       return out;
     },
   });
 }
+
+/** Fewer kept searches than this say too little for personas from the model. */
+const PERSONA_MIN_POOL = 10;

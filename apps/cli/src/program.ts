@@ -557,7 +557,7 @@ bought is in the cache, and SERPs that were paid for but not yet delivered are c
   program
     .command("signals")
     .description(
-      "Steps 3, 7, 8, 11 and 14: trends, competitors' size and pace, entity check and glossary, for the map",
+      "Steps 1, 3, 7, 8, 11 and 14: trends, competitors' size and pace, entity check, glossary and personas, for the map",
     )
     .argument("<clusters>", "clusters.json written by mycel cluster")
     .option("--queries <file>", "queries.json (default: next to clusters)")

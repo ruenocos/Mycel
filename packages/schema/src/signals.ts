@@ -12,6 +12,7 @@ import { Market } from "./context.ts";
  * - Step 3, central entity: is it a thing Wikidata (and so Google's knowledge graph) knows.
  * - Step 7, glossary: the domain's terms from the searches, with what Wikidata says about them:
  *   a short description, other names, broader terms and parts (word relations).
+ * - Step 1, personas: the groups of people behind the searches, each proven by searches they made.
  */
 
 const Month = z.string().regex(/^\d{4}-\d{2}$/, "YYYY-MM");
@@ -167,6 +168,38 @@ export const GlossaryEntry = z.object({
 });
 export type GlossaryEntry = z.infer<typeof GlossaryEntry>;
 
+/** Where a persona is in its search: learning, comparing, ready to buy or looking nearby. */
+export const PersonaStage = z.enum(["learn", "compare", "buy", "local"]);
+export type PersonaStage = z.infer<typeof PersonaStage>;
+
+/**
+ * Step 1: a group of people behind the searches. The model names and groups them; every persona
+ * is proven by searches from the research (never made up) and its stage comes from their intents.
+ * Name, who and needs are in the market language: people read them.
+ */
+export const Persona = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  name: z.string().min(1),
+  /** One plain sentence: who they are and what they want. */
+  who: z.string().min(1),
+  /** The context audience it stands for, when it is one. */
+  audience: z.string().min(1).optional(),
+  stage: PersonaStage,
+  /** What they look for, in a few words each, taken from their searches. */
+  needs: z.array(z.string().min(1)).default([]),
+  /** Searches that prove this persona exists (kept searches), most searched first. */
+  evidence: z.array(z.string().min(1)).min(3),
+  /** Summed monthly searches of the evidence. */
+  volume: z.number().int().nonnegative(),
+  /** Business offering ids this persona is after. */
+  offerings: z.array(z.string().min(1)).default([]),
+  /** Page clusters written mainly for this persona. */
+  clusters: z.array(z.string().min(1)).default([]),
+  /** model: grouped by the model from the searches. audience: a context audience found in them. */
+  source: z.enum(["model", "audience"]),
+});
+export type Persona = z.infer<typeof Persona>;
+
 export const SignalSet = z.object({
   site: z.object({ url: z.url(), name: z.string().min(1) }),
   market: Market,
@@ -175,6 +208,7 @@ export const SignalSet = z.object({
   competitors: CompetitorSignals.optional(),
   entities: z.array(EntityCheck).optional(),
   glossary: z.array(GlossaryEntry).optional(),
+  personas: z.array(Persona).optional(),
   warnings: z.array(z.string()).default([]),
 });
 export type SignalSet = z.infer<typeof SignalSet>;

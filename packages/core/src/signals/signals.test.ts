@@ -481,4 +481,106 @@ describe("signals step with Wikidata (steps 3 and 7)", () => {
       broader: ["plant"],
     });
   });
+
+  it("groups searches into personas with the model, and falls back to the audiences", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "../../../../fixtures/clients/plantpost/context.json"),
+        "utf8",
+      ),
+    );
+    const kept = (t: string, volume = 100) => ({
+      text: t,
+      normalized: t,
+      sources: ["dfs_related" as const],
+      metrics: { volume },
+      intent: "informational" as const,
+      filter: { kept: true },
+      scores: { relevance: 1, prominence: 1, popularity: 1 },
+    });
+    const queries = [
+      "veilige planten voor katten",
+      "giftige planten huisdieren",
+      "kamerplanten veilig voor honden",
+      "kamerplant appartement weinig licht",
+      "planten voor op balkon appartement",
+      "kamerplanten voor kleine appartement",
+      "monstera kopen",
+      "monstera verzorgen",
+      "hangplant kopen",
+      "grote kamerplant",
+    ].map((t, i) => kept(t, 100 + i));
+    const clusters = {
+      site: fixture.site,
+      market: fixture.market,
+      minSharedUrls: 3,
+      clusters: [cluster("c1", "veilige planten voor katten")],
+      unclustered: [],
+      stats: {
+        queries: 0,
+        clustered: 0,
+        clusters: 1,
+        pages: 1,
+        sections: 0,
+        micro: 0,
+        singletons: 0,
+        outliers: 0,
+        ambiguousMembers: 0,
+        borderlineMembers: 0,
+      },
+    };
+    const go = async (llm: unknown) => {
+      const run = RunStore.create({
+        runsDir: mkdtempSync(join(tmpdir(), "mycel-signals-p-")),
+        client: "plantpost.example",
+        command: "signals",
+        cliVersion: "test",
+      });
+      const result = await runStep(run, signalsStep({ llm: llm as never }), {
+        context: fixture,
+        clusters,
+        queries,
+        model: "m",
+        now: NOW.toISOString(),
+      });
+      run.finish();
+      return result;
+    };
+    const byModel = await go({
+      async generateJson(
+        req: { messages: { content: string }[] },
+        schema: { parse: (v: unknown) => unknown },
+      ) {
+        const list = req.messages[1]?.content ?? "";
+        const at = (t: string) => Number(new RegExp(`(\\d+)\\. ${t} \\(`).exec(list)?.[1]);
+        return schema.parse({
+          personas: [
+            {
+              name: "Huisdiereigenaar",
+              who: "Heeft een kat of hond en wil planten die veilig zijn.",
+              audience: "huisdiereigenaren die een veilige plant zoeken",
+              needs: ["veilige planten"],
+              evidence: [
+                at("veilige planten voor katten"),
+                at("giftige planten huisdieren"),
+                at("kamerplanten veilig voor honden"),
+              ],
+              offerings: [],
+            },
+          ],
+        });
+      },
+    });
+    expect(byModel.personas).toEqual([
+      expect.objectContaining({ id: "huisdiereigenaar", source: "model", clusters: ["c1"] }),
+    ]);
+    const fallback = await go({
+      async generateJson() {
+        throw new Error("model down");
+      },
+    });
+    expect(fallback.personas?.every((p) => p.source === "audience")).toBe(true);
+    expect(fallback.personas?.length).toBeGreaterThan(0);
+    expect(fallback.warnings.join(" ")).toMatch(/model down/);
+  });
 });

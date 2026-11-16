@@ -114,3 +114,42 @@ export const MODIFIERS: Record<string, Set<string>> = {
     ...["me", "how", "what", "why", "make", "diy", "for", "without", "with", "per", "new", "is"],
   ]),
 };
+
+export const PERSONAS = {
+  /** Personas kept; the model is asked for 2 to this many. */
+  max: 4,
+  /** Searches that must prove a persona. */
+  minEvidence: 3,
+  /** Searches shown to the model: audience words first, then questions, then the most searched. */
+  pool: 150,
+  poolAudience: 50,
+  poolQuestions: 40,
+  /** Words that mark a persona's pages: at most this many per persona. */
+  markers: 8,
+};
+
+/** Words in an audience description that say nothing about who searches ("mensen die ..."). */
+export const AUDIENCE_NOISE: Record<string, Set<string>> = {
+  nl: new Set([
+    "mensen",
+    "iemand",
+    "personen",
+    "klanten",
+    "zoeken",
+    "zoekt",
+    "willen",
+    "hebben",
+    "omgeving",
+  ]),
+  en: new Set([
+    "people",
+    "someone",
+    "persons",
+    "customers",
+    "looking",
+    "want",
+    "wants",
+    "have",
+    "area",
+  ]),
+};

@@ -184,6 +184,7 @@ export function finishMaps(input: FinishInput): SiteMaps {
   ];
   const sig = input.signals;
   const glossary = sig?.glossary?.length ? { glossary: sig.glossary } : {};
+  const personas = sig?.personas?.length ? { personas: sig.personas } : {};
   const market =
     sig && (sig.trends || sig.competitors)
       ? {
@@ -202,6 +203,7 @@ export function finishMaps(input: FinishInput): SiteMaps {
     inventory,
     ...market,
     ...glossary,
+    ...personas,
     outside,
   };
 }
@@ -419,6 +421,14 @@ function finishOne(
   const coverByCluster = new Map(
     (input.signals?.competitors?.coverage ?? []).map((c) => [c.clusterId, c.competitors]),
   );
+  // The persona a page is mainly for (step 1).
+  const personaByCluster = new Map(
+    (input.signals?.personas ?? []).flatMap((p) => p.clusters.map((c) => [c, p.id] as const)),
+  );
+  const personaOf = (n: NodeDraft): Pick<MapNode, "persona"> => {
+    const id = n.clusterId ? personaByCluster.get(n.clusterId) : undefined;
+    return id ? { persona: id } : {};
+  };
   const trendOf = (n: NodeDraft) => (n.clusterId ? trendByCluster.get(n.clusterId) : undefined);
   const rivalsOf = (n: NodeDraft) => (n.clusterId ? coverByCluster.get(n.clusterId) : undefined);
   const nowMonth = new Date(input.createdAt).getUTCMonth() + 1;
@@ -716,6 +726,7 @@ function finishOne(
       ...trendField(trendOf(n)),
       ...(rivalsOf(n)?.length ? { competitors: rivalsOf(n) } : {}),
       ...termsField(n),
+      ...personaOf(n),
       ...siteSectionOf(n.id),
       linksOut: linksOf(n),
       aiOverview: n.aiOverview,

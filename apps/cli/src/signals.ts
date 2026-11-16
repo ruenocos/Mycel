@@ -55,7 +55,7 @@ const CLUSTERS_FILE = { name: "clusters file", writtenBy: "mycel cluster" };
 
 /** The fake model matches no term to Wikidata; the real one picks between the candidates. */
 function providers(env: NodeJS.ProcessEnv): LlmProvider[] {
-  const fake = new FakeProvider([], () => JSON.stringify({ results: [] }));
+  const fake = new FakeProvider([], () => JSON.stringify({ results: [], personas: [] }));
   const ollama = new OllamaProvider({
     host: env.OLLAMA_HOST ?? "https://ollama.com",
     ...(env.OLLAMA_API_KEY ? { apiKey: env.OLLAMA_API_KEY } : {}),
@@ -126,6 +126,16 @@ export function summarizeSignals(d: SignalSet): string[] {
         .slice(0, 8)
         .map((g) => g.term)
         .join(", ")}`,
+    );
+  }
+  if (d.personas?.length) {
+    lines.push(
+      `personas    ${d.personas
+        .map(
+          (p) =>
+            `${p.name} (${p.stage}, ${p.evidence.length} searches, ${p.clusters.length} pages)`,
+        )
+        .join("; ")}`,
     );
   }
   for (const w of d.warnings) lines.push(`note        ${w}`);
@@ -201,6 +211,7 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
     `trends      ${plan.trends.calls} Google Trends call(s), ${plan.trends.toBuy} to buy`,
     `sitemaps    ${opts.noSitemaps ? "skipped" : "free, read from the competitors' own sites"}`,
     `wikidata    ${opts.noWikidata ? "skipped" : "free; the model picks which item a term means"}`,
+    "personas    one model call groups the searches into personas",
   ];
   const toBuy = plan.ads.toBuy + plan.trends.toBuy;
 
@@ -273,7 +284,8 @@ export async function signalsRun(opts: SignalsOptions): Promise<SignalsResult> {
       signalsStep({
         ...(keywords ? { keywords } : {}),
         ...(sitemaps ? { sitemaps } : {}),
-        ...(wikidata ? { wikidata, llm } : {}),
+        ...(wikidata ? { wikidata } : {}),
+        llm,
       }),
       {
         context,
