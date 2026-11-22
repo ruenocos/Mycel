@@ -1,4 +1,5 @@
 /** Zod schemas for every step's data. Steps validate their output against these (step contract). */
+export * from "./brief.ts";
 export * from "./business.ts";
 export * from "./cli-output.ts";
 export * from "./cluster.ts";

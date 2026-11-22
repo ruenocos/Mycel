@@ -1,0 +1,165 @@
+{
+  "version": 2,
+  "site": { "url": "https://plantpost.example", "name": "Plantpost" },
+  "market": { "country": "NL", "language": "nl" },
+  "page": {
+    "nodeId": "n-grote-kamerplant-kopen",
+    "name": "Grote kamerplanten",
+    "mainQuery": "grote kamerplant kopen",
+    "queries": ["grote kamerplant kopen", "grote kamerplanten", "xxl kamerplanten"],
+    "url": "/kamerplanten/grote-kamerplanten/",
+    "existingUrl": "/kamerplanten/grote-kamerplanten/",
+    "action": "improve",
+    "intent": "transactional",
+    "persona": "stedeling-met-appartement"
+  },
+  "research": { "runId": "2026-11-20T09-12-00Z-a1b2", "createdAt": "2026-11-20T09:40:00.000Z" },
+  "createdAt": "2026-11-21T10:00:00.000Z",
+  "made": {
+    "runId": "2026-11-21T10-00-00Z-c3d4",
+    "stepVersion": "1",
+    "model": "deepseek-v4.1-flash",
+    "prompt": { "id": "brief", "version": "1" }
+  },
+  "coreMessage": "Een grote kamerplant geeft direct sfeer, en bij Plantpost kies je hem op hoogte en krijg je hem met een verzorgingskaartje thuis.",
+  "reader": {
+    "searchesFor": "Een grote kamerplant voor de woonkamer, en welke soort past bij hun ruimte en licht.",
+    "feels": "Enthousiast, maar onzeker of een grote plant het overleeft en hoe hij heel aankomt.",
+    "doesNext": "Kiest een plant op hoogte en bestelt hem."
+  },
+  "difference": {
+    "text": "De toppers tonen vooral lange productlijsten; deze pagina helpt eerst kiezen op hoogte en plek en zegt wat er bij de plant zit.",
+    "against": [
+      {
+        "rank": 1,
+        "title": "Grote kamerplanten kopen? | Groot assortiment",
+        "url": "https://plantenwinkel.example/grote-kamerplanten",
+        "domain": "plantenwinkel.example"
+      },
+      {
+        "rank": 2,
+        "title": "XXL kamerplanten online bestellen",
+        "url": "https://groenthuis.example/xxl",
+        "domain": "groenthuis.example"
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "id": "e1",
+      "fact": "Planten zelf uitgezocht bij kwekers in het Westland",
+      "source": { "kind": "business", "ref": "facts.0" },
+      "check": { "state": "checked", "by": "Wons", "at": "2026-11-21T11:00:00.000Z" }
+    },
+    {
+      "id": "e2",
+      "fact": "Elke plant komt met een verzorgingskaartje",
+      "source": {
+        "kind": "url",
+        "url": "https://plantpost.example/",
+        "title": "Plantpost | Kamerplanten online bestellen en thuisbezorgd"
+      },
+      "check": { "state": "unchecked" }
+    },
+    {
+      "id": "e4",
+      "fact": "grote kamerplanten, hoogte: vanaf 80 cm, 80 tot 180 cm",
+      "source": { "kind": "business", "ref": "offerings.grote-kamerplanten.attributes.0" },
+      "check": { "state": "unchecked" }
+    },
+    {
+      "id": "e5",
+      "fact": "Aanbod grote kamerplanten: XL kamerplanten, Monstera, Strelitzia, Ficus lyrata, Kentia palm",
+      "source": { "kind": "business", "ref": "offerings.grote-kamerplanten.subOfferings" },
+      "check": { "state": "unchecked" }
+    }
+  ],
+  "outline": [
+    {
+      "level": "h1",
+      "heading": "Grote kamerplanten kopen",
+      "purpose": "Zegt in twee zinnen wat de lezer hier vindt en waarom een grote plant de moeite waard is.",
+      "form": "prose",
+      "points": ["direct sfeer in de woonkamer", "kiezen op hoogte"],
+      "evidence": ["e4"],
+      "words": 120
+    },
+    {
+      "level": "h2",
+      "heading": "Welke grote kamerplant past bij jouw ruimte?",
+      "purpose": "Helpt kiezen tussen de soorten op hoogte en licht.",
+      "form": "comparison",
+      "points": [
+        "Monstera, Strelitzia, Ficus lyrata en Kentia palm naast elkaar",
+        "hoogte per soort"
+      ],
+      "evidence": ["e4", "e5"],
+      "words": 300
+    },
+    {
+      "level": "h3",
+      "heading": "XL kamerplanten van 80 tot 180 cm",
+      "purpose": "Laat zien wat de grootste maten zijn.",
+      "form": "table",
+      "points": ["maten van 80 tot 180 cm"],
+      "evidence": ["e4"],
+      "words": 150
+    },
+    {
+      "level": "h2",
+      "heading": "Zo komt je plant bij je thuis",
+      "purpose": "Neemt de twijfel over levering en verzorging weg.",
+      "form": "bullets",
+      "points": ["uitgezocht bij kwekers", "verzorgingskaartje bij elke plant"],
+      "evidence": ["e1", "e2"],
+      "words": 200
+    },
+    {
+      "level": "h2",
+      "heading": "Veelgestelde vragen over grote kamerplanten",
+      "purpose": "Beantwoordt de vragen die mensen bij het zoeken stellen.",
+      "form": "faq",
+      "points": [],
+      "evidence": [],
+      "words": 230
+    }
+  ],
+  "avoid": [
+    "tuinplanten of buitenplanten",
+    "kunstplanten als alternatief",
+    "beloftes over levertijd"
+  ],
+  "questions": [
+    { "question": "welke grote kamerplant heeft weinig licht nodig", "from": "people_also_ask" },
+    { "question": "hoe groot wordt een monstera", "from": "people_also_ask" },
+    { "question": "grote kamerplant weinig licht", "from": "related_search" },
+    { "question": "kamerplant verpotten", "from": "gap" }
+  ],
+  "links": [
+    {
+      "direction": "to",
+      "nodeId": "root-kamerplant",
+      "url": "/",
+      "name": "Kamerplanten",
+      "type": "to_core",
+      "anchor": "kamerplanten online bestellen"
+    },
+    {
+      "direction": "from",
+      "nodeId": "n-xxl-kamerplanten",
+      "url": "/kamerplanten/xl-planten/",
+      "name": "XL kamerplanten",
+      "type": "sibling",
+      "anchor": "grote kamerplanten"
+    }
+  ],
+  "cta": { "action": "Kies je plant op hoogte en bestel hem.", "conversion": "buy" },
+  "targets": {
+    "words": 1000,
+    "headings": 4,
+    "keyword": { "term": "grote kamerplant kopen", "uses": 3 },
+    "readingLevel": "B1"
+  },
+  "terms": ["kamerplant", "monstera", "strelitzia"],
+  "warnings": []
+}
