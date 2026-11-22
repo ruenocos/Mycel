@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { BusinessProfile, ClientContext } from "@mycel/schema";
+import { Brief, BusinessProfile, ClientContext } from "@mycel/schema";
+import { BRIEF_STEP_VERSION, BRIEFS_DIR } from "../brief/step.ts";
 import { CLUSTER_VERSION } from "../cluster/cluster.ts";
 import { FILTER_STEP_VERSION } from "../filter/classify.ts";
 import { listRuns } from "../log/timeline.ts";
@@ -27,6 +28,7 @@ export const PIPELINE_STEPS = [
   "cluster",
   "signals",
   "map",
+  "brief",
 ] as const;
 export type PipelineStepId = (typeof PIPELINE_STEPS)[number];
 
@@ -94,6 +96,8 @@ const SPECS: StepSpec[] = [
     madeFrom: ["cluster", "context", "business", "signals"],
     run: { command: "map", step: "map", version: MAP_STEP_VERSION },
   },
+  // One brief per page (ADR 0020), in a folder: ok once there is one and none is out of date.
+  { id: "brief", file: BRIEFS_DIR, needs: ["map"], madeFrom: ["map", "business"] },
 ];
 
 export const BUSINESS_PROPOSAL_FILE = "business.proposed.json";
@@ -232,6 +236,10 @@ export function pipelineStatus(dir: string, opts: PipelineStatusOptions): Pipeli
       businessStatus(spec, dir, at, set);
       continue;
     }
+    if (spec.id === "brief") {
+      briefStatus(spec, dir, mtime, set);
+      continue;
+    }
     if (at === undefined) {
       set(spec, "missing", `no ${spec.file} yet`);
       continue;
@@ -307,6 +315,61 @@ function businessStatus(
     const c = read.data.confirmed;
     set(spec, "ok", `confirmed by ${c.by} on ${day(c.at)}`);
   } else set(spec, "waiting", "not confirmed by the owner yet");
+}
+
+/**
+ * The briefs folder: missing until it holds a brief; invalid when one can't be read; stale when a
+ * brief is older than the map or the business profile it was made from, or an older version of
+ * the step wrote it. Briefs are small, so each one is read.
+ */
+function briefStatus(
+  spec: StepSpec,
+  dir: string,
+  mtime: Map<PipelineStepId, number>,
+  set: (spec: StepSpec, state: PipelineState, detail: string) => void,
+): void {
+  const folder = join(dir, spec.file);
+  const files = existsSync(folder)
+    ? readdirSync(folder)
+        .filter((f) => f.endsWith(".json"))
+        .sort()
+    : [];
+  if (!files.length) {
+    set(spec, "missing", "no briefs yet");
+    return;
+  }
+  const newest = Math.max(
+    ...spec.madeFrom.map((id) => mtime.get(id)).filter((t) => t !== undefined),
+  );
+  let older = 0;
+  let oldVersion: string | undefined;
+  for (const file of files) {
+    const path = join(folder, file);
+    const read = readSmall(path, (raw) => {
+      const p = Brief.safeParse(raw);
+      return p.success ? p : { success: false, why: firstIssue(p.error.issues) };
+    });
+    if (!read.ok) {
+      set(spec, "invalid", `${spec.file}/${file} is not a brief: ${read.why}`);
+      return;
+    }
+    if (statSync(path).mtimeMs < newest) older++;
+    if (read.data.made.stepVersion !== BRIEF_STEP_VERSION) oldVersion = read.data.made.stepVersion;
+  }
+  const n = `${files.length} brief${files.length === 1 ? "" : "s"}`;
+  if (older) {
+    set(
+      spec,
+      "stale",
+      `${older} of ${n} older than the map or business profile they are made from`,
+    );
+  } else if (oldVersion !== undefined) {
+    set(
+      spec,
+      "stale",
+      `a brief was made by brief version ${oldVersion}; the step is at version ${BRIEF_STEP_VERSION} now`,
+    );
+  } else set(spec, "ok", n);
 }
 
 function actionFor(spec: StepSpec, s: PipelineStepStatus, dir: string): PipelineAction["action"] {

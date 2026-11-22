@@ -86,8 +86,8 @@ describe("pipelineStatus", () => {
       state: "stale",
       detail: "older than queries.json, which it is made from",
     });
-    // Clustering comes first; the map is made again after it.
-    expect(status.next.map((a) => a.step)).toEqual(["business", "cluster"]);
+    // Clustering comes first; the map is made again after it. The map is there: briefs can start.
+    expect(status.next.map((a) => a.step)).toEqual(["business", "cluster", "brief"]);
     expect(status.done).toBe(false);
   });
 
@@ -157,6 +157,8 @@ describe("pipelineStatus", () => {
     writeFileSync(join(dir, "business.json"), JSON.stringify(profile));
     writeFileSync(join(dir, "signals.json"), "{}");
     writeFileSync(join(dir, "topical-map.json"), "{}");
+    mkdirSync(join(dir, "briefs"));
+    writeFileSync(join(dir, "briefs", "n-1.json"), readFileSync(join(fixture, "brief.json")));
     const status = pipelineStatus(dir, { runsDir });
     const order: PipelineStepId[] = [
       "context",
@@ -166,10 +168,40 @@ describe("pipelineStatus", () => {
       "cluster",
       "signals",
       "map",
+      "brief",
     ];
     expect(status.steps.map((s) => s.step)).toEqual(order);
     expect(status.steps.map((s) => s.state)).toEqual(order.map(() => "ok"));
     expect(status).toMatchObject({ done: true, next: [] });
+  });
+
+  it("judges the briefs folder: missing, ok, stale after a new map, invalid, older version", () => {
+    const { dir, runsDir } = folder([...DATASETS, "signals.json", "topical-map.json"]);
+    const brief = () => pipelineStatus(dir, { runsDir }).steps.find((s) => s.step === "brief");
+    expect(brief()).toMatchObject({ state: "missing", detail: "no briefs yet" });
+    expect(actions(dir, runsDir)).toContain("brief:run");
+
+    mkdirSync(join(dir, "briefs"));
+    const file = join(dir, "briefs", "n-1.json");
+    const good = JSON.parse(readFileSync(join(fixture, "brief.json"), "utf8"));
+    writeFileSync(file, JSON.stringify(good));
+    expect(brief()).toMatchObject({ state: "ok", detail: "1 brief" });
+
+    // The map was made again after the brief: its research may have changed.
+    touch(join(dir, "topical-map.json"), Date.now() + HOUR);
+    expect(brief()).toMatchObject({
+      state: "stale",
+      detail: "1 of 1 brief older than the map or business profile they are made from",
+    });
+    touch(join(dir, "topical-map.json"), Date.now() - HOUR);
+
+    writeFileSync(file, JSON.stringify({ ...good, made: { ...good.made, stepVersion: "0" } }));
+    expect(brief()?.state).toBe("stale");
+    expect(brief()?.detail).toContain("made by brief version 0");
+
+    writeFileSync(file, JSON.stringify({ ...good, version: 1 }));
+    expect(brief()?.state).toBe("invalid");
+    expect(brief()?.detail).toMatch(/^briefs\/n-1.json is not a brief: version/);
   });
 
   it("reads a site from a folder name only when the name is one", () => {
