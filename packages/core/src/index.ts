@@ -1,5 +1,6 @@
 /** All SEO logic lives in core; apps are thin shells around it (ADR 0001). */
 export { SCHEMA_VERSION } from "@mycel/schema";
+export * from "./brief/index.ts";
 export * from "./cluster/index.ts";
 export * from "./context/index.ts";
 export * from "./evals/map.ts";

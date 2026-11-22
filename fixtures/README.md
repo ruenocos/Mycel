@@ -19,6 +19,8 @@ Each client folder holds:
 - `checklist.md`: the human half of the gate.
 - `filter-eval.json`: labeled queries for the step 9 filter (`FilterEvalSet`): keep or drop, with
   a short why. `mycel eval filter` scores the filter on them.
+- `brief.json` (plantpost only): a page brief (`Brief`, ADR 0020) as `mycel brief` writes it,
+  for the schema tests and as the example a reader of the file can start from.
 - `filter-holdout.json`: a second labeled set with fresh queries, scored by `mycel eval filter` and
   never tuned on. Every client the filter is tuned on has one. A blind test client has none: its
   `filter-eval.json` is never tuned on either.

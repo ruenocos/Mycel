@@ -22,3 +22,4 @@ One short file per settled decision. To change a decision, add a new ADR that su
 | 0016 | Site sections: a page has a topic and a page type                         |
 | 0017 | Page budget and first plan: a year of work, existing pages first          |
 | 0019 | Map signals: trends and competitor sitemaps as one step before the map    |
+| 0020 | Page briefs: a structured brief per map page, facts only from the profile |

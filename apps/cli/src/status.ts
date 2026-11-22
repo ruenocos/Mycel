@@ -63,6 +63,11 @@ function nextStep(status: PipelineStatus, a: PipelineAction): NextStep {
       };
     case "map":
       return { command: command("map", file("cluster")) };
+    case "brief":
+      return {
+        command: command("brief", file("map"), "--plan", "3", "--dry-run"),
+        note: "then the same without --dry-run; --page <id> briefs any other page",
+      };
   }
 }
 

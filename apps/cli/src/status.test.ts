@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { businessApply, businessPropose, businessSimulate } from "./business.ts";
+import { command } from "./input.ts";
 import { runCli } from "./program.ts";
 import { statusRun } from "./status.ts";
 
@@ -111,6 +112,15 @@ describe("mycel status", () => {
       expect(commands()).toEqual([`mycel map ${at("clusters.json")}`]);
 
       put("topical-map.json");
+      expect(next()).toEqual([
+        {
+          command: `mycel brief ${at("topical-map.json")} --plan 3 --dry-run`,
+          note: "then the same without --dry-run; --page <id> briefs any other page",
+        },
+      ]);
+
+      mkdirSync(at("briefs"));
+      put("briefs/n-1.json", readFileSync(join(fixtures, "plantpost", "brief.json"), "utf8"));
       const done = statusRun({ dir, runsDir });
       expect(done.next).toEqual([{ note: "nothing to do: every file is there and up to date" }]);
       expect(done.data).toMatchObject({ client: client.host, done: true, actions: [] });
@@ -148,7 +158,8 @@ describe("mycel status", () => {
       "cluster     missing  no clusters.json yet",
       "signals     missing  no signals.json yet",
       "map         missing  no topical-map.json yet",
-      `next        mycel context confirm ${join(folder, "context.json")}`,
+      "brief       missing  no briefs yet",
+      `next        ${command("context confirm", join(folder, "context.json"))}`,
     ]);
 
     await runCli(["node", "mycel", "status", join(folder, "nope")], (s) => out.push(s), io);

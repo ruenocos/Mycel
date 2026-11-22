@@ -259,6 +259,14 @@ const CASES: Case[] = [
     code: "BELOW_PASS_MARK",
     exitCode: 10,
   },
+  {
+    name: "brief",
+    // The map the map case wrote; the fake model writes the brief.
+    ok: () => [at("topical-map.json"), "--plan", "1", "--provider", "fake"],
+    fail: () => [at("topical-map.json"), "--page", "nope", "--provider", "fake"],
+    code: "USAGE",
+    exitCode: 2,
+  },
   { name: "status", ok: () => [dir], fail: () => [at("nope")], code: "INPUT_MISSING", exitCode: 3 },
   { name: "logs", ok: () => ["latest"], fail: () => ["nope"], code: "RUN_NOT_FOUND", exitCode: 3 },
   {
@@ -395,6 +403,21 @@ describe("mycel --json", () => {
     expect(dry.output.runId).toBeUndefined();
     expect(dry.output.data).toMatchObject({ plan: { total: 1, toBuy: 1, exact: true } });
     expect(dry.output.costUsd).toBe(0);
+  });
+
+  it("counts a brief before it is written: tokens and cost, no run, no file", async () => {
+    const dry = await json("brief", at("topical-map.json"), "--plan", "1", "--dry-run");
+    expect(dry.output.runId).toBeUndefined();
+    expect(dry.output.outputs).toEqual({});
+    expect(dry.output.costUsd).toBe(0);
+    const data = dry.output.data as {
+      pages: { input: number; output: number }[];
+      estimateUsd: number;
+    };
+    expect(data.pages).toHaveLength(1);
+    expect(data.pages[0]?.input).toBeGreaterThan(500);
+    expect(data.estimateUsd).toBe(0);
+    expect(dry.output.summary.some((l) => l.includes("nothing is bought"))).toBe(true);
   });
 
   it("turns note lines into warnings, and a failed run keeps its run id, outputs and steps", async () => {

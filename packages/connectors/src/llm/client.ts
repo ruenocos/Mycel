@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { stableStringify } from "../dataforseo/cache.ts";
+import { BudgetExceededError } from "../dataforseo/client.ts";
 import type { LlmCallInput, LlmRecorder } from "../recorder.ts";
 import {
   type ChatRequest,
@@ -24,8 +25,13 @@ export interface LlmClientOptions {
   providers: LlmProvider[];
   /** Provider name used when a request doesn't name one. */
   defaultProvider: string;
-  /** Per "provider/model" pricing, for cost logging. */
+  /** Per "provider/model" pricing, for cost logging and the budget. */
   pricing?: Record<string, ModelPricing>;
+  /**
+   * Cost cap for this client, in dollars. A call is refused when what was spent plus the price
+   * of its prompt would pass it. Only priced models count: Ollama Cloud is a subscription.
+   */
+  budgetUsd?: number;
   /** Retries for network errors, 429 and 5xx. */
   maxTransportRetries?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -77,8 +83,13 @@ export class LlmClient {
   private readonly providers = new Map<string, LlmProvider>();
   private readonly digestCache = new Map<string, Promise<string | undefined>>();
   private readonly sleep: (ms: number) => Promise<void>;
+  private spent = 0;
 
   constructor(private readonly opts: LlmClientOptions) {
+    const cap = opts.budgetUsd;
+    if (cap !== undefined && !(Number.isFinite(cap) && cap > 0)) {
+      throw new RangeError(`budgetUsd must be a positive number of dollars, got ${cap}`);
+    }
     for (const p of opts.providers) this.providers.set(p.name, p);
     if (!this.providers.has(opts.defaultProvider)) {
       throw new Error(`default provider "${opts.defaultProvider}" is not registered`);
@@ -116,6 +127,25 @@ export class LlmClient {
       this.digestCache.set(key, d);
     }
     return d;
+  }
+
+  /** What the calls through this client cost so far, in dollars (priced models only). */
+  get spentUsd(): number {
+    return Math.round(this.spent * 1e6) / 1e6;
+  }
+
+  /** Refuses a call that would pass the budget: what was spent plus its prompt at the input price. */
+  private checkBudget(p: LlmProvider, req: ChatRequest): void {
+    const cap = this.opts.budgetUsd;
+    const price = this.opts.pricing?.[`${p.name}/${req.model}`];
+    if (cap === undefined || !price) return;
+    const promptTokens = req.messages.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0);
+    const next = (promptTokens * price.inputPerMTok) / 1e6;
+    if (this.spent + next > cap) {
+      throw new BudgetExceededError(
+        `LLM budget of $${cap} reached ($${this.spentUsd} spent, the next call needs about $${next.toFixed(4)})`,
+      );
+    }
   }
 
   private cost(p: LlmProvider, model: string, usage: ChatResponse["usage"]): number | undefined {
@@ -190,10 +220,13 @@ export class LlmClient {
         attempt,
         startedAt,
       };
+      // Outside the try: a refused call never went out, so it is no failed attempt.
+      this.checkBudget(p, req);
       try {
         const response = await p.chat(req);
         const validationError = unusable(response) ?? validate?.(response.content) ?? null;
         const costUsd = this.cost(p, req.model, response.usage);
+        if (costUsd) this.spent += costUsd;
         rec.recordLlmCall({
           ...base,
           request: response.requestBody,

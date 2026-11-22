@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { BudgetExceededError } from "../dataforseo/client.ts";
 import type { LlmCallInput, LlmRecorder } from "../recorder.ts";
 import { LlmClient, LlmOutputError } from "./client.ts";
 import { FakeProvider } from "./fake.ts";
@@ -258,5 +259,42 @@ describe("LlmClient", () => {
     });
     await expect(llm.generate(req, recorder().rec)).rejects.toThrow(/401/);
     expect(n).toBe(1);
+  });
+});
+
+describe("LlmClient budget", () => {
+  const priced = { "fake/deepseek-v4.1-flash": { inputPerMTok: 100_000, outputPerMTok: 100_000 } };
+
+  it("refuses the call that would pass the cap, and never sends it", async () => {
+    const fake = new FakeProvider([], '{"ok":true}');
+    const llm = new LlmClient({
+      providers: [fake],
+      defaultProvider: "fake",
+      pricing: priced,
+      budgetUsd: 2,
+    });
+    const { rec, calls } = recorder();
+    await llm.generate(req, rec);
+    expect(llm.spentUsd).toBeGreaterThan(0);
+    // The first call cost about $1.8: the next prompt alone passes the $2 cap.
+    await expect(llm.generate(req, rec)).rejects.toBeInstanceOf(BudgetExceededError);
+    await expect(llm.generate(req, rec)).rejects.toThrow(/LLM budget of \$2 reached/);
+    expect(fake.requests).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("doesn't count an unpriced model (a subscription), and refuses a cap that isn't a number", async () => {
+    const llm = new LlmClient({
+      providers: [new FakeProvider([], '{"ok":true}')],
+      defaultProvider: "fake",
+      budgetUsd: 0.000001,
+    });
+    await llm.generate(req, recorder().rec);
+    await llm.generate(req, recorder().rec);
+    expect(llm.spentUsd).toBe(0);
+    const make = (budgetUsd: number) => () =>
+      new LlmClient({ providers: [new FakeProvider()], defaultProvider: "fake", budgetUsd });
+    expect(make(Number.NaN)).toThrow(RangeError);
+    expect(make(0)).toThrow(/budgetUsd must be a positive number/);
   });
 });

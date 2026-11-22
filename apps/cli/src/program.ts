@@ -9,6 +9,7 @@ import {
   summarizeRun,
 } from "@mycel/core";
 import { Command, CommanderError, Option } from "commander";
+import { briefRun } from "./brief.ts";
 import { businessApply, businessPropose, businessScore, businessSimulate } from "./business.ts";
 import { clusterRun } from "./cluster.ts";
 import { contextConfirm, contextPropose } from "./context.ts";
@@ -74,6 +75,7 @@ A typical run, in order (every command prints the next one with its paths filled
   mycel cluster clients/example.com/queries.json --live-serp --budget 3
   mycel signals clients/example.com/clusters.json --buy --budget 0.5
   mycel map clients/example.com/clusters.json
+  mycel brief clients/example.com/topical-map.json --plan 3 --dry-run
   mycel logs latest
 
 Keys live in .env (.env.example lists every key). Check them before a paid run:
@@ -82,8 +84,9 @@ Keys live in .env (.env.example lists every key). Check them before a paid run:
   DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD: search data for research and cluster --live-serp
   (context propose uses it when set; --no-dataforseo leaves it out)
 
-Before a paid run, ask what it costs: add --dry-run to research or cluster. A research run
-that failed continues with --resume <run>. A cluster run just runs again: the cache has it.
+Before a paid run, ask what it costs: add --dry-run to research, cluster, signals or brief.
+A research run that failed continues with --resume <run>. A cluster run just runs again: the
+cache has it.
 
 Lost track of a client? mycel status clients/example.com says which files are there, which
 are out of date, and which command comes next.
@@ -682,6 +685,90 @@ are free; a site that blocks the request is listed as blocked, never worked arou
             ...(opts.signals ? { signalsFile: opts.signals } : {}),
             ...(opts.expect ? { expectFile: opts.expect } : {}),
             ...(opts.out ? { out: opts.out } : {}),
+            ...(opts.debug ? { debug: true } : {}),
+          }),
+        ),
+    );
+
+  program
+    .command("brief")
+    .description(
+      "A brief per map page: message, reader, angle, outline, facts with sources, questions, links, targets",
+    )
+    .argument("<map>", "topical-map.json written by mycel map")
+    .option(
+      "--page <page...>",
+      "map pages to brief: a page id, URL or main search (more than one is fine)",
+    )
+    .option("--plan <n>", "brief the first n pages of the first plan")
+    .option("--context <file>", "the confirmed context (default: context.json next to the map)")
+    .option("--research <file>", "research.json for results pages (default: next to the map)")
+    .option("--queries <file>", "queries.json (default: next to the map)")
+    .option(
+      "--signals <file>",
+      "signals.json for competitors' gap topics (default: next to the map)",
+    )
+    .option("--out <dir>", "where to write the briefs (default: briefs/ next to the map)")
+    .option(
+      "--budget <usd>",
+      "LLM cost cap for this run (binds when the model has a price)",
+      "0.25",
+    )
+    .option("--force", "replace a brief whose facts a person already checked")
+    .addOption(provider())
+    .option("--model <model>", "model that writes the brief", DEFAULT_MODEL)
+    .option(...DRY_RUN)
+    .option(...UNCONFIRMED)
+    .option(...DEBUG)
+    .addHelpText(
+      "after",
+      `${examples(
+        "mycel brief clients/example.com/topical-map.json --plan 3 --dry-run",
+        "mycel brief clients/example.com/topical-map.json --plan 3",
+        "mycel brief clients/example.com/topical-map.json --page n-c12 /kamerplanten/monstera/",
+      )}
+One model call per page. Facts come only from the business profile; a person checks each one
+(the brief says which are unchecked). Results pages come from research.json and the cache:
+nothing is bought. A brief whose facts a person checked is only replaced with --force.
+`,
+    )
+    .action(
+      (
+        mapFile: string,
+        opts: {
+          page?: string[];
+          plan?: string;
+          context?: string;
+          research?: string;
+          queries?: string;
+          signals?: string;
+          out?: string;
+          budget: string;
+          force?: boolean;
+          provider: string;
+          model: string;
+          dryRun?: boolean;
+          allowUnconfirmed?: boolean;
+          debug?: boolean;
+        },
+      ) =>
+        run(opts, () =>
+          briefRun({
+            runsDir: runsDir(),
+            mapFile,
+            budgetUsd: Number(opts.budget),
+            allowUnconfirmed: !!opts.allowUnconfirmed,
+            provider: opts.provider,
+            model: opts.model,
+            ...(opts.page ? { pages: opts.page } : {}),
+            ...(opts.plan !== undefined ? { plan: Number(opts.plan) } : {}),
+            ...(opts.context ? { contextFile: opts.context } : {}),
+            ...(opts.research ? { researchFile: opts.research } : {}),
+            ...(opts.queries ? { queriesFile: opts.queries } : {}),
+            ...(opts.signals ? { signalsFile: opts.signals } : {}),
+            ...(opts.out ? { outDir: opts.out } : {}),
+            ...(opts.force ? { force: true } : {}),
+            ...(opts.dryRun ? { dryRun: true } : {}),
             ...(opts.debug ? { debug: true } : {}),
           }),
         ),
