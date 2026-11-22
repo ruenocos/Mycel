@@ -27,7 +27,9 @@ Every command ends with a short run summary, the files it wrote and the next com
 
 `mycel status <client folder>` says where a client stands: which files are there, which are out of date, and the next command. For a script or an agent, `--json` on any command prints the result as one JSON object on stdout (the fields are in `docs/adr/0015-cli-output-contract.md`).
 
-Before a paid run, `--dry-run` on `mycel cluster` or `mycel research` shows what it would cost without buying anything. A research run that failed continues with `--resume <run>`: it keeps its seeds, so what was already bought is reused.
+After the map, `mycel brief <topical-map.json> --plan 3` writes a brief for each of the first plan's pages to `briefs/` (ADR 0020): message, reader, outline, facts with their source, questions, links and targets.
+
+Before a paid run, `--dry-run` on `mycel cluster`, `mycel research` or `mycel brief` shows what it would cost without buying anything. A research run that failed continues with `--resume <run>`: it keeps its seeds, so what was already bought is reused.
 
 Node 22+ and pnpm 10.
 

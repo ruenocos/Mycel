@@ -32,7 +32,7 @@ import { z } from "zod";
 import { readProfile } from "./business.ts";
 import { CONTEXT_FILE, QUERIES_FILE } from "./cluster.ts";
 import { dataforseoFromEnv } from "./dataforseo.ts";
-import { assertConfirmed, readInput } from "./input.ts";
+import { assertConfirmed, command, readInput } from "./input.ts";
 import type { CommandResult } from "./run-command.ts";
 
 /**
@@ -319,7 +319,10 @@ export async function mapRun(opts: MapOptions): Promise<MapResult> {
       ? {
           out,
           outputs: { map: out },
-          next: [{ note: `review ${out}: the map is the last step of the pipeline for now` }],
+          next: [
+            { note: `review ${out}` },
+            { command: command("brief", out, "--plan", "3", "--dry-run") },
+          ],
         }
       : {}),
     ...(gate ? { gate } : {}),
